@@ -1,34 +1,10 @@
 """
 Dashboard Ejecutivo — Análisis de Tesorería
 =============================================
-Fuente: extracto contable 'gastos.xlsx' (movimientos de bancos, comisiones,
-intereses, gravamen y rendimientos financieros).
-
-Reglas de negocio clave (definidas por el usuario, verificadas contra los
-datos reales):
-  - Columna 'Importe en ML' (col. I): valor contable. Cada cuenta tiene una
-    naturaleza contable distinta (débito/crédito), así que en la data
-    conviven positivos y negativos para una misma cuenta o banco.
-  - NUNCA se debe tomar valor absoluto fila por fila (eso infla artificialmente
-    los totales al tratar débitos y créditos que se cancelan entre sí como si
-    fueran dos gastos distintos). La regla correcta es: primero NETEAR
-    (sumar con signo) por la dimensión de interés, y solo AL FINAL aplicar
-    valor absoluto sobre el neto — así el signo contable no distorsiona las
-    gráficas, pero tampoco se pierde información por cancelación.
-  - Columna 'Nombre cuenta' (col. L): la cuenta contable (Rendimientos,
-    Comisiones, Gravamen, Intereses, Gastos bancarios).
-  - Columna 'Clave referencia 3' (col. B en el archivo real — ver nota
-    abajo): nombre del banco/tercero contraparte del movimiento.
-
-Nota de corrección: el dashboard de referencia entregado por el usuario
-etiquetaba esta columna como "columna C", pero al inspeccionar el archivo,
-el texto del banco/tercero está en la columna B ('Clave referencia 3'); la
-columna C real ('Clave ref.1') es un código numérico, no un nombre. La
-variable de datos usada aquí es la correcta (los valores de banco), solo se
-corrige la etiqueta.
+Reglas de negocio clave:
+  - Carga estrictamente manual por sesión (sin persistencia en nube).
+  - Neteo de naturalezas contables antes de aplicar valores absolutos.
 """
-
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -61,7 +37,6 @@ st.markdown("""
     div[data-testid="stMetric"] label, div[data-testid="stMetric"] div { color: white !important; }
     .insight-box { background-color: #E3F2FD; padding: 15px; border-left: 5px solid #0D47A1; border-radius: 5px; margin-bottom: 18px; color: #0D3B66;}
     .alert-box   { background-color: #FFF1F0; padding: 15px; border-left: 5px solid #FF1744; border-radius: 5px; margin-bottom: 18px; color: #7F1D1D;}
-    .warn-box    { background-color: #FFFBEB; padding: 15px; border-left: 5px solid #F59E0B; border-radius: 5px; margin-bottom: 18px; color: #78350F;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -73,22 +48,7 @@ COL_CUENTA = "Nombre cuenta"
 COL_BANCO = "Clave referencia 3"
 COL_FECHA = "Fe-contab-"
 
-# Cuentas que representan INGRESO financiero (naturaleza contraria al resto).
-# Se usa solo para el KPI de "Costo Financiero Neto"; el resto del dashboard
-# trata todas las cuentas de forma simétrica.
 CUENTAS_INGRESO = {"Rendimientos"}
-
-
-def find_default_excel():
-    """Busca un .xlsx/.xls primero en data/raw/ y luego en el directorio de
-    trabajo actual, para no depender de dónde se ejecute `streamlit run`."""
-    for carpeta in (Path("data/raw"), Path(".")):
-        if carpeta.exists():
-            encontrados = sorted(f for f in carpeta.glob("*.xls*") if not f.name.startswith("~$"))
-            if encontrados:
-                return encontrados[0]
-    return None
-
 
 def safe_div(numer, denom):
     if isinstance(denom, pd.Series):
@@ -96,7 +56,6 @@ def safe_div(numer, denom):
     elif denom == 0:
         denom = np.nan
     return numer / denom
-
 
 @st.cache_data(show_spinner="Procesando datos de tesorería...")
 def load_and_process_data(file_source):
@@ -116,279 +75,206 @@ def load_and_process_data(file_source):
 
     df["Anio"] = df[COL_FECHA].dt.year
     df["Mes_Num"] = df[COL_FECHA].dt.month
+    df["Mes_Nombre"] = df["Mes_Num"].map(MESES_NOMBRES)
     df["Periodo"] = df["Anio"].astype(str) + "-" + df["Mes_Num"].astype(str).str.zfill(2)
 
     return df
 
-
 def netear(data: pd.DataFrame, dimensiones: list) -> pd.DataFrame:
-    """Suma CON SIGNO por las dimensiones dadas (netea débitos/créditos) y
-    solo al final expone el valor absoluto — ver docstring del módulo."""
     neto = data.groupby(dimensiones, as_index=False)[COL_VALOR].sum()
     neto = neto.rename(columns={COL_VALOR: "Neto"})
     neto["Valor"] = neto["Neto"].abs()
     return neto
 
-
 def linea_tendencia(x_num: np.ndarray, y: np.ndarray):
-    """Regresión lineal simple (mínimos cuadrados) sin depender de
-    statsmodels — mantiene el despliegue liviano para Streamlit Cloud."""
     if len(x_num) < 2 or np.all(x_num == x_num[0]):
         return None
     coef = np.polyfit(x_num, y, 1)
     return np.polyval(coef, x_num), coef[0]
 
-
 # =============================================================================
-# 1. CARGA DE DATOS
+# 1. CARGA DE DATOS ESTRICTA
 # =============================================================================
 st.sidebar.title("🏦 BI Tesorería")
-uploaded_file = st.sidebar.file_uploader("Actualizar Data (.xlsx)", type=["xlsx", "xls"])
+uploaded_file = st.sidebar.file_uploader("Cargar Base de Datos (.xlsx)", type=["xlsx", "xls"])
 
-if uploaded_file is not None:
-    df = load_and_process_data(uploaded_file)
-else:
-    archivo_default = find_default_excel()
-    if archivo_default is None:
-        st.warning("⚠️ Se requiere un archivo Excel para inicializar el sistema. "
-                   "Cárgalo en la barra lateral o colócalo en `data/raw/`.")
-        st.stop()
-    df = load_and_process_data(str(archivo_default))
+if uploaded_file is None:
+    st.info("👋 Por favor, carga el archivo base de Excel para iniciar el procesamiento. Los datos se procesan en memoria y no se guardan en la nube.")
+    st.stop()
+
+df = load_and_process_data(uploaded_file)
 
 if df.empty:
     st.error("El archivo no contiene movimientos procesables.")
     st.stop()
 
 # =============================================================================
-# 2. FILTROS GLOBALES
+# 2. NAVEGACIÓN PRINCIPAL
 # =============================================================================
 st.sidebar.markdown("---")
-st.sidebar.subheader("📅 Filtros Globales")
-
-anios_disp = sorted(df["Anio"].dropna().unique())
-anio_sel = st.sidebar.multiselect("Año(s)", anios_disp, default=anios_disp)
-
-cuentas_disp = sorted(df[COL_CUENTA].unique())
-cuenta_sel = st.sidebar.multiselect("Cuenta(s)", cuentas_disp, default=cuentas_disp)
-
-bancos_disp = sorted(df[COL_BANCO].unique())
-banco_sel = st.sidebar.multiselect("Banco / Tercero", bancos_disp, default=bancos_disp)
-
-df_f = df[df["Anio"].isin(anio_sel) & df[COL_CUENTA].isin(cuenta_sel) & df[COL_BANCO].isin(banco_sel)]
-
-st.markdown('<p class="main-title">🏦 Análisis de Tesorería — Cuentas y Bancos</p>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Movimientos bancarios, comisiones, intereses, gravamen y rendimientos financieros</p>', unsafe_allow_html=True)
-
-if df_f.empty:
-    st.warning("No hay movimientos para los filtros seleccionados. Ajusta año, cuenta o banco en la barra lateral.")
-    st.stop()
+st.sidebar.subheader("Navegación")
+menu_opcion = st.sidebar.radio("Ir a:", ["Vista Consolidada", "Análisis por Cuenta"])
 
 # =============================================================================
-# 3. KPIS MAESTROS
+# 3. VISTA CONSOLIDADA
 # =============================================================================
-por_cuenta_total = netear(df_f, [COL_CUENTA]).set_index(COL_CUENTA)["Neto"]
-ingreso_total = -por_cuenta_total[por_cuenta_total.index.isin(CUENTAS_INGRESO)].sum()  # neto negativo -> ingreso positivo
-gasto_total = por_cuenta_total[~por_cuenta_total.index.isin(CUENTAS_INGRESO)].sum()
-resultado_financiero_neto = ingreso_total - gasto_total  # positivo = ganancia neta, negativo = pérdida neta
-n_bancos = df_f[COL_BANCO].nunique()
-n_movimientos = len(df_f)
+if menu_opcion == "Vista Consolidada":
+    st.markdown('<p class="main-title">🏦 Vista Consolidada de Tesorería</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Panorama general de todas las cuentas y rubros financieros</p>', unsafe_allow_html=True)
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Resultado Financiero Neto", f"${resultado_financiero_neto:,.0f}",
-          "Ganancia neta" if resultado_financiero_neto >= 0 else "Pérdida neta")
-c2.metric("Gastos Financieros (Com+Int+Grav+Otros)", f"${gasto_total:,.0f}")
-c3.metric("Ingresos Financieros (Rendimientos)", f"${ingreso_total:,.0f}")
-c4.metric("Bancos / Terceros activos", f"{n_bancos}")
-c5.metric("Movimientos analizados", f"{n_movimientos:,}")
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📅 Filtros Globales")
+    anios_disp = sorted(df["Anio"].dropna().unique())
+    anio_sel = st.sidebar.multiselect("Año(s)", anios_disp, default=anios_disp)
 
-banco_mas_costoso = netear(df_f[~df_f[COL_CUENTA].isin(CUENTAS_INGRESO)], [COL_BANCO]).sort_values(
-    "Valor", ascending=False)
-cuenta_mayor_peso = netear(df_f, [COL_CUENTA]).sort_values("Valor", ascending=False)
+    df_f = df[df["Anio"].isin(anio_sel)]
 
-if not banco_mas_costoso.empty and not cuenta_mayor_peso.empty:
-    top_banco = banco_mas_costoso.iloc[0]
-    top_cuenta = cuenta_mayor_peso.iloc[0]
-    pct_cuenta = safe_div(top_cuenta["Valor"], cuenta_mayor_peso["Valor"].sum()) * 100
-    pct_banco = safe_div(top_banco["Valor"], banco_mas_costoso["Valor"].sum()) * 100
-    st.markdown(f"""
-    <div class="insight-box">
-        💡 <b>Lectura del periodo:</b> la cuenta con mayor peso es <b>{top_cuenta[COL_CUENTA]}</b>
-        (${top_cuenta['Valor']:,.0f}, {pct_cuenta:.1f}% del total analizado). El banco/tercero que más
-        concentra costos financieros es <b>{top_banco[COL_BANCO]}</b> (${top_banco['Valor']:,.0f},
-        {pct_banco:.1f}% de los gastos financieros).
-    </div>
-    """, unsafe_allow_html=True)
+    if df_f.empty:
+        st.warning("No hay movimientos para los filtros seleccionados.")
+        st.stop()
 
-st.markdown("---")
+    por_cuenta_total = netear(df_f, [COL_CUENTA]).set_index(COL_CUENTA)["Neto"]
+    ingreso_total = -por_cuenta_total[por_cuenta_total.index.isin(CUENTAS_INGRESO)].sum()
+    gasto_total = por_cuenta_total[~por_cuenta_total.index.isin(CUENTAS_INGRESO)].sum()
+    resultado_financiero_neto = ingreso_total - gasto_total
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Resultado Financiero Neto", f"${resultado_financiero_neto:,.0f}", "Ganancia" if resultado_financiero_neto >= 0 else "Pérdida")
+    c2.metric("Total Gastos Financieros", f"${gasto_total:,.0f}")
+    c3.metric("Total Ingresos (Rendimientos)", f"${ingreso_total:,.0f}")
 
-# =============================================================================
-# 4. ANÁLISIS POR CUENTA Y DESGLOSE POR BANCO
-# =============================================================================
-col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("📊 Distribución por Cuenta")
+        df_cuentas = netear(df_f, [COL_CUENTA]).sort_values("Valor", ascending=False)
+        fig_cuenta = px.bar(
+            df_cuentas, x=COL_CUENTA, y="Valor", color=COL_CUENTA,
+            color_discrete_sequence=PALETA_VIVA, text_auto=".2s"
+        )
+        fig_cuenta.update_layout(showlegend=False, yaxis_title="$ Neto")
+        st.plotly_chart(fig_cuenta, use_container_width=True)
 
-with col1:
-    st.subheader("📊 Análisis por Cuenta")
-    df_cuentas = netear(df_f, [COL_CUENTA]).sort_values("Valor", ascending=False)
-    fig_cuenta = px.bar(
-        df_cuentas, x=COL_CUENTA, y="Valor", color=COL_CUENTA,
-        color_discrete_sequence=PALETA_VIVA, text_auto=".2s",
-        title="Valor neteado (siempre positivo) por cuenta contable",
-    )
-    fig_cuenta.update_layout(showlegend=False, yaxis_title="$ Neto")
-    st.plotly_chart(fig_cuenta, use_container_width=True)
-
-with col2:
-    st.subheader("🏦 Desglose de Bancos por Cuenta")
-    df_bancos = netear(df_f, [COL_CUENTA, COL_BANCO])
-    df_bancos = df_bancos[df_bancos["Valor"] > 0]
-    if df_bancos.empty:
-        st.info("Sin datos para desglosar con los filtros actuales.")
-    else:
+    with col2:
+        st.subheader("🏦 Bancos por Cuenta")
+        df_bancos = netear(df_f, [COL_CUENTA, COL_BANCO])
+        df_bancos = df_bancos[df_bancos["Valor"] > 0]
         fig_bancos = px.sunburst(
             df_bancos, path=[COL_CUENTA, COL_BANCO], values="Valor",
-            color=COL_CUENTA, color_discrete_sequence=PALETA_VIVA,
-            title="Participación de cada banco dentro de cada cuenta",
+            color=COL_CUENTA, color_discrete_sequence=PALETA_VIVA
         )
         st.plotly_chart(fig_bancos, use_container_width=True)
 
-st.markdown("---")
-
 # =============================================================================
-# 5. RANKING DE BANCOS
+# 4. ANÁLISIS ESPECÍFICO POR CUENTA
 # =============================================================================
-st.subheader("🏆 Ranking de Bancos por Costo Financiero")
-df_gastos_bancos = df_f[~df_f[COL_CUENTA].isin(CUENTAS_INGRESO)]
-top_n = st.slider("Mostrar top N bancos/terceros", 5, min(30, n_bancos) if n_bancos > 5 else 5,
-                  min(10, n_bancos))
-ranking_bancos = netear(df_gastos_bancos, [COL_BANCO]).sort_values("Valor", ascending=False).head(top_n)
+elif menu_opcion == "Análisis por Cuenta":
+    st.markdown('<p class="main-title">🔎 Análisis Detallado por Cuenta</p>', unsafe_allow_html=True)
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Filtros Específicos")
+    
+    # Selector de cuenta individual
+    cuentas_disp = sorted(df[COL_CUENTA].unique())
+    cuenta_seleccionada = st.sidebar.selectbox("Seleccione la Cuenta", cuentas_disp)
+    
+    # Filtros de tiempo para el análisis
+    anios_disp = sorted(df["Anio"].dropna().unique())
+    anio_sel = st.sidebar.multiselect("Año(s)", anios_disp, default=anios_disp)
+    
+    meses_disp = sorted(df["Mes_Num"].dropna().unique())
+    mes_sel = st.sidebar.multiselect("Mes(es)", options=meses_disp, format_func=lambda x: MESES_NOMBRES[x], default=meses_disp)
 
-if ranking_bancos.empty:
-    st.info("Sin datos de costos por banco para los filtros seleccionados.")
-else:
-    fig_rank = px.bar(
-        ranking_bancos.sort_values("Valor"), x="Valor", y=COL_BANCO, orientation="h",
-        color="Valor", color_continuous_scale="Turbo", text_auto=".2s",
-        title=f"Top {top_n} bancos/terceros por costo financiero acumulado",
-    )
-    fig_rank.update_layout(xaxis_title="$ Costo Financiero", yaxis_title="")
-    st.plotly_chart(fig_rank, use_container_width=True)
+    # Aplicar filtros
+    df_cuenta = df[(df[COL_CUENTA] == cuenta_seleccionada) & (df["Anio"].isin(anio_sel)) & (df["Mes_Num"].isin(mes_sel))]
 
-st.markdown("---")
+    if df_cuenta.empty:
+        st.warning(f"No hay movimientos para la cuenta {cuenta_seleccionada} en el periodo seleccionado.")
+        st.stop()
 
-# =============================================================================
-# 6. TENDENCIA TEMPORAL (con línea de tendencia OLS manual)
-# =============================================================================
-st.subheader("📈 Tendencia Temporal por Cuenta")
-df_tendencia = netear(df_f, ["Periodo", COL_CUENTA]).sort_values("Periodo")
+    # KPIS de la cuenta
+    total_cuenta = netear(df_cuenta, [COL_CUENTA])["Valor"].sum()
+    bancos_activos = df_cuenta[COL_BANCO].nunique()
+    
+    st.markdown(f"### Cuenta analizada: **{cuenta_seleccionada}**")
+    c1, c2 = st.columns(2)
+    c1.metric("Valor Total Neteado (Filtros actuales)", f"${total_cuenta:,.0f}")
+    c2.metric("Terceros / Bancos involucrados", f"{bancos_activos}")
 
-fig_tendencia = go.Figure()
-periodos_ordenados = sorted(df_tendencia["Periodo"].unique())
-x_map = {p: i for i, p in enumerate(periodos_ordenados)}
+    st.markdown("---")
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.subheader("🏦 Comportamiento por Banco")
+        df_bancos_cta = netear(df_cuenta, [COL_BANCO]).sort_values("Valor", ascending=False)
+        fig_bancos_cta = px.bar(
+            df_bancos_cta, x="Valor", y=COL_BANCO, orientation="h",
+            color="Valor", color_continuous_scale="Turbo", text_auto=".2s"
+        )
+        fig_bancos_cta.update_layout(yaxis_title="", xaxis_title="$ Valor")
+        st.plotly_chart(fig_bancos_cta, use_container_width=True)
 
-for i, cuenta in enumerate(sorted(df_tendencia[COL_CUENTA].unique())):
-    sub = df_tendencia[df_tendencia[COL_CUENTA] == cuenta].sort_values("Periodo")
-    color = PALETA_VIVA[i % len(PALETA_VIVA)]
-    fig_tendencia.add_trace(go.Scatter(
-        x=sub["Periodo"], y=sub["Valor"], mode="lines+markers", name=cuenta,
-        line=dict(width=2.5, color=color), marker=dict(size=7),
-    ))
-    x_num = sub["Periodo"].map(x_map).to_numpy(dtype=float)
-    y_num = sub["Valor"].to_numpy(dtype=float)
-    resultado = linea_tendencia(x_num, y_num)
-    if resultado is not None:
-        y_trend, pendiente = resultado
-        fig_tendencia.add_trace(go.Scatter(
-            x=sub["Periodo"], y=y_trend, mode="lines", name=f"Tendencia {cuenta}",
-            line=dict(width=2, color=color, dash="dot"), showlegend=False,
+    with col_b:
+        st.subheader("📈 Evolución Temporal y Tendencia")
+        df_tend_cta = netear(df_cuenta, ["Periodo"]).sort_values("Periodo")
+        fig_tend_cta = go.Figure()
+        
+        fig_tend_cta.add_trace(go.Scatter(
+            x=df_tend_cta["Periodo"], y=df_tend_cta["Valor"], mode="lines+markers",
+            line=dict(width=3, color=PALETA_VIVA[1]), marker=dict(size=8), name="Valor Real"
         ))
 
-fig_tendencia.update_layout(
-    height=460, title="Comportamiento del saldo neto con líneas de tendencia",
-    yaxis_title="$ Neto", legend_title="Cuenta",
-)
-st.plotly_chart(fig_tendencia, use_container_width=True)
+        # Línea de tendencia
+        periodos_ordenados = sorted(df_tend_cta["Periodo"].unique())
+        x_map = {p: i for i, p in enumerate(periodos_ordenados)}
+        x_num = df_tend_cta["Periodo"].map(x_map).to_numpy(dtype=float)
+        y_num = df_tend_cta["Valor"].to_numpy(dtype=float)
+        
+        res_tendencia = linea_tendencia(x_num, y_num)
+        if res_tendencia is not None:
+            y_trend, _ = res_tendencia
+            fig_tend_cta.add_trace(go.Scatter(
+                x=df_tend_cta["Periodo"], y=y_trend, mode="lines",
+                line=dict(width=2, color="gray", dash="dot"), name="Tendencia"
+            ))
+            
+        fig_tend_cta.update_layout(yaxis_title="$ Neto")
+        st.plotly_chart(fig_tend_cta, use_container_width=True)
 
-# Insight de tendencia: qué cuenta sube más rápido
-tendencias = []
-for cuenta in df_tendencia[COL_CUENTA].unique():
-    sub = df_tendencia[df_tendencia[COL_CUENTA] == cuenta].sort_values("Periodo")
-    if len(sub) >= 2:
-        x_num = sub["Periodo"].map(x_map).to_numpy(dtype=float)
-        y_num = sub["Valor"].to_numpy(dtype=float)
-        resultado = linea_tendencia(x_num, y_num)
-        if resultado is not None:
-            _, pendiente = resultado
-            tendencias.append((cuenta, pendiente))
+    st.markdown("---")
+    st.subheader("⚖️ Versus Temporal (Misma Cuenta)")
+    st.caption("Compara el rendimiento de esta cuenta entre dos periodos distintos (ej. Q1 vs Q2, o 2024 vs 2025).")
+    
+    col_v1, col_v2 = st.columns(2)
+    periodos_totales = sorted(df[df[COL_CUENTA] == cuenta_seleccionada]["Periodo"].dropna().unique())
+    
+    with col_v1:
+        meses_a = st.multiselect("Periodo A", options=periodos_totales, key="mes_a")
+    with col_v2:
+        meses_b = st.multiselect("Periodo B", options=periodos_totales, key="mes_b")
 
-if tendencias:
-    cuenta_sube, pend_sube = max(tendencias, key=lambda t: t[1])
-    cuenta_baja, pend_baja = min(tendencias, key=lambda t: t[1])
-    if pend_sube > 0:
-        st.markdown(f"""
-        <div class="alert-box">
-            🚨 <b>Tendencia al alza:</b> la cuenta <b>{cuenta_sube}</b> muestra la pendiente más
-            pronunciada al alza (~${pend_sube:,.0f} adicionales por mes en promedio). Si es un rubro
-            de costo, amerita revisión con el banco o el área responsable.
-        </div>
-        """, unsafe_allow_html=True)
-    if pend_baja < 0:
-        st.markdown(f"""
-        <div class="insight-box">
-            ✅ <b>Tendencia a la baja:</b> la cuenta <b>{cuenta_baja}</b> muestra la mayor reducción
-            mensual promedio (~${abs(pend_baja):,.0f} menos por mes).
-        </div>
-        """, unsafe_allow_html=True)
+    if meses_a and meses_b:
+        df_a = df[(df[COL_CUENTA] == cuenta_seleccionada) & (df["Periodo"].isin(meses_a))]
+        df_b = df[(df[COL_CUENTA] == cuenta_seleccionada) & (df["Periodo"].isin(meses_b))]
 
-st.markdown("---")
+        val_a = netear(df_a, [COL_CUENTA])["Valor"].sum() if not df_a.empty else 0
+        val_b = netear(df_b, [COL_CUENTA])["Valor"].sum() if not df_b.empty else 0
+        
+        variacion = val_b - val_a
+        pct = (variacion / val_a * 100) if val_a != 0 else 0
 
-# =============================================================================
-# 7. VERSUS TEMPORAL (COMPARADOR DE PERIODOS)
-# =============================================================================
-st.subheader("⚖️ Versus Temporal — Comparativa de Periodos")
-st.caption("Selecciona uno o varios meses para cada periodo — puedes comparar un mes puntual, "
-           "un trimestre, o el mismo mes en dos años distintos.")
-
-col_a, col_b = st.columns(2)
-periodos_disp = sorted(df_f["Periodo"].dropna().unique())
-with col_a:
-    st.markdown("**Periodo A**")
-    meses_a = st.multiselect("Meses Periodo A", options=periodos_disp, key="mes_a")
-with col_b:
-    st.markdown("**Periodo B**")
-    meses_b = st.multiselect("Meses Periodo B", options=periodos_disp, key="mes_b")
-
-if meses_a and meses_b:
-    df_a = df_f[df_f["Periodo"].isin(meses_a)]
-    df_b = df_f[df_f["Periodo"].isin(meses_b)]
-
-    neto_a = netear(df_a, [COL_CUENTA]).rename(columns={"Valor": "Periodo A"})[[COL_CUENTA, "Periodo A"]]
-    neto_b = netear(df_b, [COL_CUENTA]).rename(columns={"Valor": "Periodo B"})[[COL_CUENTA, "Periodo B"]]
-    comp = pd.merge(neto_a, neto_b, on=COL_CUENTA, how="outer").fillna(0)
-    comp["Variación $"] = comp["Periodo B"] - comp["Periodo A"]
-    comp["Variación %"] = comp.apply(lambda r: safe_div(r["Variación $"], r["Periodo A"]) * 100, axis=1)
-
-    df_vs = pd.melt(comp, id_vars=[COL_CUENTA], value_vars=["Periodo A", "Periodo B"],
-                    var_name="Etiqueta", value_name="Valor")
-    fig_vs = px.bar(
-        df_vs, x=COL_CUENTA, y="Valor", color="Etiqueta", barmode="group",
-        color_discrete_sequence=[COLOR_INGRESO, "#2979FF"],
-        title=f"Comparativa: {', '.join(meses_a)} vs {', '.join(meses_b)}",
-    )
-    st.plotly_chart(fig_vs, use_container_width=True)
-
-    st.dataframe(comp.style.format({
-        "Periodo A": "${:,.0f}", "Periodo B": "${:,.0f}",
-        "Variación $": "${:+,.0f}", "Variación %": "{:+.1f}%",
-    }, na_rep="—").background_gradient(subset=["Variación %"], cmap="RdYlGn_r"), use_container_width=True)
-
-    mayor_var = comp.reindex(comp["Variación $"].abs().sort_values(ascending=False).index).iloc[0]
-    direccion = "aumentó" if mayor_var["Variación $"] > 0 else "disminuyó"
-    st.markdown(f"""
-    <div class="insight-box">
-        💡 <b>Mayor variación:</b> la cuenta <b>{mayor_var[COL_CUENTA]}</b> {direccion} en
-        ${abs(mayor_var['Variación $']):,.0f} ({mayor_var['Variación %']:+.1f}%) entre los dos periodos
-        comparados.
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.info("Selecciona al menos un mes en cada periodo (A y B) para ver la comparación.")
+        df_vs = pd.DataFrame({
+            "Periodo": [f"Periodo A ({len(meses_a)} meses)", f"Periodo B ({len(meses_b)} meses)"],
+            "Valor": [val_a, val_b]
+        })
+        
+        col_graf, col_kpi = st.columns([2, 1])
+        with col_graf:
+            fig_vs = px.bar(df_vs, x="Periodo", y="Valor", color="Periodo", color_discrete_sequence=[COLOR_INGRESO, "#2979FF"], text_auto=".2s")
+            st.plotly_chart(fig_vs, use_container_width=True)
+            
+        with col_kpi:
+            st.metric(label="Variación Total", value=f"${variacion:,.0f}", delta=f"{pct:+.1f}%")
+            if variacion > 0:
+                st.info("El rubro aumentó respecto al periodo A.")
+            elif variacion < 0:
+                st.success("El rubro disminuyó respecto al periodo A.")
