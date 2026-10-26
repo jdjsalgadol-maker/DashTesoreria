@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import time
+from datetime import datetime
 
 # ==========================================
 # CONFIGURACIÓN DE LA PÁGINA
@@ -78,7 +79,6 @@ def load_data(file):
             
     if col_fecha:
         df['Fecha'] = pd.to_datetime(df[col_fecha], errors='coerce')
-        # Limpiar filas sin fecha válida
         df = df.dropna(subset=['Fecha'])
         df['Año'] = df['Fecha'].dt.year
         df['Mes'] = df['Fecha'].dt.month
@@ -100,37 +100,49 @@ def load_data(file):
 with st.spinner("Procesando archivo..."):
     df = load_data(archivo_subido)
 
-# Verificación de seguridad si las columnas no existen
 if 'Fecha' not in df.columns or 'Importe en ML' not in df.columns:
     st.error(f"❌ El archivo subido no tiene el formato esperado. Columnas detectadas: {', '.join(df.columns)}")
-    st.warning("Asegúrese de que su archivo contenga una columna para Fechas (ej: 'Fecha' o 'Fe/contab/') y otra para Valores (ej: 'Importe en ML' o 'Valor').")
     st.stop()
 
 # ==========================================
 # PANEL IZQUIERDO Y FILTROS
 # ==========================================
 st.sidebar.markdown("---")
-st.sidebar.title("🎛️ Filtros")
+st.sidebar.title("🎛️ Filtros y Controles")
 
-fecha_inicio, fecha_fin = st.sidebar.date_input(
+# --- SLIDER DE FECHAS ---
+st.sidebar.subheader("📅 Rango de Tiempo")
+min_date = df['Fecha'].min().date()
+max_date = df['Fecha'].max().date()
+
+fecha_inicio, fecha_fin = st.sidebar.slider(
     "Seleccione el periodo de análisis:",
-    [df['Fecha'].min().date(), df['Fecha'].max().date()]
+    min_value=min_date,
+    max_value=max_date,
+    value=(min_date, max_date),
+    format="YYYY-MM-DD"
 )
 
-columnas_segmentacion = ['Nombre cuenta', 'Clave referencia 3', 'Cuenta', 'CT', 'Concepto']
-columnas_validas = [c for c in columnas_segmentacion if c in df.columns]
+# --- SEGMENTADOR POR NOMBRE DE CUENTA ---
+st.sidebar.subheader("🏷️ Tipo de Cuenta")
+col_cuenta = None
+posibles_cuentas = ['Nombre cuenta', 'Cuenta', 'Concepto', 'Clave referencia 3']
+for col in posibles_cuentas:
+    if col in df.columns:
+        col_cuenta = col
+        break
 
-segmentador_seleccionado = None
-if columnas_validas:
-    segmentador_seleccionado = st.sidebar.selectbox("Segmentar datos por:", columnas_validas)
-    opciones_segmento = st.sidebar.multiselect(f"Seleccione {segmentador_seleccionado}:", df[segmentador_seleccionado].dropna().unique())
-else:
-    opciones_segmento = []
+opciones_cuenta = []
+if col_cuenta:
+    opciones_cuenta = st.sidebar.multiselect(
+        f"Filtrar por {col_cuenta}:", 
+        df[col_cuenta].dropna().unique()
+    )
 
-# Filtrado del dataframe
+# Aplicar filtros al DataFrame
 mask = (df['Fecha'].dt.date >= fecha_inicio) & (df['Fecha'].dt.date <= fecha_fin)
-if opciones_segmento and segmentador_seleccionado:
-    mask = mask & (df[segmentador_seleccionado].isin(opciones_segmento))
+if opciones_cuenta:
+    mask = mask & (df[col_cuenta].isin(opciones_cuenta))
 df_filtrado = df[mask]
 
 st.title("📊 Análisis Dinámico de Gastos")
@@ -141,34 +153,35 @@ st.markdown("---")
 # ==========================================
 st.subheader("📈 Evolución y Tendencias")
 
-# Usar 'Clave referencia 3' u otra columna descriptiva disponible
-col_agrupacion = 'Clave referencia 3' if 'Clave referencia 3' in df_filtrado.columns else (columnas_validas[0] if columnas_validas else None)
-
-if col_agrupacion:
-    top_bancos = df_filtrado.groupby(col_agrupacion)['Importe en ML'].sum().nlargest(5).index.tolist()
+if col_cuenta:
+    # Identificar el Top 5 de cuentas para evitar el "efecto espagueti"
+    top_cuentas = df_filtrado.groupby(col_cuenta)['Importe en ML'].sum().nlargest(5).index.tolist()
     
     df_graficos = df_filtrado.copy()
-    df_graficos['Agrupación'] = df_graficos[col_agrupacion].apply(
-        lambda x: x if x in top_bancos else 'OTROS (Menor volumen)'
+    df_graficos['Agrupación Cuenta'] = df_graficos[col_cuenta].apply(
+        lambda x: x if x in top_cuentas else 'OTRAS CUENTAS'
     )
     
-    df_tendencia = df_graficos.groupby(['Periodo', 'Agrupación'])['Importe en ML'].sum().reset_index()
+    df_tendencia = df_graficos.groupby(['Periodo', 'Agrupación Cuenta'])['Importe en ML'].sum().reset_index()
     
     col1, col2 = st.columns(2)
     with col1:
+        # GRAFICO DE LÍNEAS CONSOLIDADO POR CUENTA
         fig_line = px.line(
-            df_tendencia, x='Periodo', y='Importe en ML', color='Agrupación', 
-            title="Variaciones Mensuales (Top 5)", markers=True
+            df_tendencia, x='Periodo', y='Importe en ML', color='Agrupación Cuenta', 
+            title="Evolución Total Consolidada por Cuenta", markers=True
         )
-        fig_line.update_layout(xaxis_showgrid=False, yaxis_showgrid=True)
+        fig_line.update_layout(xaxis_showgrid=False, yaxis_showgrid=True, legend_title="Cuentas Principales")
         st.plotly_chart(fig_line, use_container_width=True)
         
     with col2:
+        # GRAFICO DE BARRAS HORIZONTALES
         fig_bar = px.bar(
-            df_tendencia, x='Periodo', y='Importe en ML', color='Agrupación', 
-            title="Composición del Gasto", barmode='stack'
+            df_tendencia, x='Importe en ML', y='Periodo', color='Agrupación Cuenta', 
+            title="Composición del Gasto", barmode='stack', orientation='h'
         )
-        fig_bar.update_layout(xaxis_showgrid=False, yaxis_showgrid=True)
+        # Ajustamos el layout para el gráfico horizontal
+        fig_bar.update_layout(xaxis_showgrid=True, yaxis_showgrid=False, yaxis={'categoryorder':'category descending'}, legend_title="Cuentas Principales")
         st.plotly_chart(fig_bar, use_container_width=True)
 
 # ==========================================
@@ -192,10 +205,10 @@ st.dataframe(df_matriz.style.map(color_variacion, subset=['Variación %']).forma
 st.markdown("---")
 st.subheader("💡 Los 4 Porqués del Análisis")
 with st.expander("1. ¿Por qué se observan picos atípicos en ciertos meses?"):
-    st.write("Están correlacionados con la estacionalidad de las cuentas y pagos extraordinarios.")
+    st.write("Están correlacionados con la estacionalidad de las cuentas y pagos extraordinarios. Verifique el gráfico de barras para identificar qué rubro específico generó la expansión.")
 with st.expander("2. ¿Por qué varía el margen de porcentaje mes a mes?"):
-    st.write("Refleja el flujo operativo. Subidas en rojo indican expansión de gastos fuera de la media.")
+    st.write("Refleja el flujo operativo. Subidas en rojo en la matriz indican expansión de gastos fuera de la media esperada del periodo anterior.")
 with st.expander("3. ¿Por qué la tendencia histórica anual difiere de la mensual?"):
-    st.write("El análisis mensual tiene ruido contable; el anual muestra el crecimiento real estructural.")
-with st.expander("4. ¿Por qué la proyección marca esta tendencia?"):
-    st.write("El modelo detecta si el volumen escala más rápido de lo que se reduce históricamente.")
+    st.write("El análisis mensual presenta fluctuaciones cíclicas a corto plazo. Si analizamos la tendencia global por cuenta, observamos el crecimiento estructural real.")
+with st.expander("4. ¿Por qué la proyección de algunas cuentas marca un alza sostenida?"):
+    st.write("Al analizar el volumen consolidado, el modelo detecta que los gastos en las cuentas top superan las reducciones históricas, marcando una tendencia agregada al alza.")
