@@ -61,7 +61,7 @@ if archivo_subido is None:
     st.stop()
 
 # ==========================================
-# PREPARACIÓN DE DATOS (FLEXIBLE)
+# PREPARACIÓN DE DATOS
 # ==========================================
 @st.cache_data
 def load_data(file):
@@ -107,15 +107,26 @@ if 'Fecha' not in df.columns or 'Importe en ML' not in df.columns:
 st.sidebar.markdown("---")
 st.sidebar.title("🎛️ Filtros y Controles")
 
+# 1. Slider para Años y Multiselect para Meses
 st.sidebar.subheader("📅 Rango de Tiempo")
-min_date = df['Fecha'].min().date()
-max_date = df['Fecha'].max().date()
+min_year = int(df['Año'].min())
+max_year = int(df['Año'].max())
 
-fecha_inicio, fecha_fin = st.sidebar.slider(
-    "Seleccione el periodo de análisis:",
-    min_value=min_date, max_value=max_date, value=(min_date, max_date), format="YYYY-MM-DD"
-)
+if min_year == max_year:
+    rango_anios = st.sidebar.slider("Seleccione el Año:", min_value=min_year, max_value=max_year, value=min_year)
+    anios_seleccionados = [rango_anios]
+else:
+    rango_anios = st.sidebar.slider("Seleccione Rango de Años:", min_value=min_year, max_value=max_year, value=(min_year, max_year))
+    anios_seleccionados = list(range(rango_anios[0], rango_anios[1] + 1))
 
+meses_disponibles = sorted(df['Mes'].unique())
+nombres_meses = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
+meses_formato = [f"{m} - {nombres_meses[m]}" for m in meses_disponibles]
+
+meses_seleccionados_str = st.sidebar.multiselect("Seleccione Mes(es):", meses_formato, default=meses_formato)
+meses_seleccionados = [int(m.split(" - ")[0]) for m in meses_seleccionados_str]
+
+# 2. Segmentador por Nombre de cuenta
 st.sidebar.subheader("🏷️ Tipo de Cuenta")
 col_cuenta = None
 for col in ['Nombre cuenta', 'Cuenta', 'Concepto']:
@@ -127,13 +138,14 @@ opciones_cuenta = []
 if col_cuenta:
     opciones_cuenta = st.sidebar.multiselect(f"Filtrar por {col_cuenta}:", df[col_cuenta].dropna().unique())
 
-mask = (df['Fecha'].dt.date >= fecha_inicio) & (df['Fecha'].dt.date <= fecha_fin)
+# Aplicar filtros de panel izquierdo
+mask = (df['Año'].isin(anios_seleccionados)) & (df['Mes'].isin(meses_seleccionados))
 if opciones_cuenta:
     mask = mask & (df[col_cuenta].isin(opciones_cuenta))
 df_filtrado = df[mask]
 
 # ==========================================
-# PANEL PRINCIPAL Y SEGMENTADOR DE TIPO (COL N)
+# PANEL PRINCIPAL Y SEGMENTADOR COL N
 # ==========================================
 st.title("📊 Análisis Dinámico de Gastos")
 
@@ -143,19 +155,16 @@ for col in ['Tipo', 'TIPO', 'N Tipo', 'Tipo de cuenta']:
     if col in df.columns:
         col_tipo = col
         break
-
-# Si no la encuentra por nombre, toma por defecto la columna N (índice 13) si existe
+# Si no la encuentra por nombre, toma la columna N (índice 13) si existe
 if not col_tipo and len(df.columns) > 13:
     col_tipo = df.columns[13]
 
 if col_tipo:
-    # Segmentador en el panel principal
     st.subheader(f"🗂️ Segmentador Principal ({col_tipo})")
     opciones_tipo = st.multiselect(
-        f"Seleccione las opciones de {col_tipo} para filtrar todo el dashboard:", 
+        f"Seleccione las opciones de '{col_tipo}' para filtrar todo el dashboard:", 
         df_filtrado[col_tipo].dropna().unique()
     )
-    # Si el usuario selecciona opciones en el panel principal, aplicamos el filtro al dataframe
     if opciones_tipo:
         df_filtrado = df_filtrado[df_filtrado[col_tipo].isin(opciones_tipo)]
 
@@ -174,6 +183,7 @@ if col_cuenta:
         lambda x: x if x in top_cuentas else 'OTRAS CUENTAS'
     )
     
+    # Agrupar por Periodo para la línea de tiempo
     df_tendencia = df_graficos.groupby(['Periodo', 'Agrupación Cuenta'])['Importe en ML'].sum().reset_index()
     
     col1, col2 = st.columns(2)
@@ -223,8 +233,6 @@ if col_ref:
     )
     
     st.plotly_chart(fig_bar_ref, use_container_width=True)
-else:
-    st.info("No se detectó la Columna B ('Clave referencia 3') en el archivo cargado para generar este gráfico.")
 
 # ==========================================
 # 3. MATRIZ DE VARIACIONES
@@ -243,7 +251,28 @@ def color_variacion(val):
 st.dataframe(df_matriz.style.map(color_variacion, subset=['Variación %']).format({"Importe en ML": "${:,.2f}", "Periodo Anterior": "${:,.2f}", "Variación %": "{:.2f}%"}), use_container_width=True)
 
 # ==========================================
-# 4. PREGUNTAS (4 PORQUÉS)
+# 4. ANÁLISIS PREDICTIVO
+# ==========================================
+st.markdown("---")
+st.subheader("🔮 Análisis Predictivo de Tendencias")
+if len(df_matriz) > 2:
+    # Regresión lineal para predecir el comportamiento general
+    x = np.arange(len(df_matriz))
+    y = df_matriz['Importe en ML'].values
+    z = np.polyfit(x, y, 1) # Polinomio de grado 1 (Línea recta)
+    p = np.poly1d(z)
+    
+    tendencia_str = "alza" if z[0] > 0 else "baja"
+    color_tendencia = "🔴" if z[0] > 0 else "🟢" # Asumiendo que es gasto: alza es alerta, baja es positivo
+    
+    proyeccion = p(len(x))
+    
+    st.info(f"{color_tendencia} **Proyección Algorítmica:** Basado en el volumen de las variaciones del periodo analizado, el modelo matemático proyecta que la tendencia general va a la **{tendencia_str}**. De mantenerse las condiciones operativas actuales, se estima que el importe global para el próximo periodo será de aproximadamente **${proyeccion:,.2f}**.")
+else:
+    st.warning("Se requieren al menos 3 periodos (meses) continuos de datos para generar un modelo predictivo confiable.")
+
+# ==========================================
+# 5. PREGUNTAS (4 PORQUÉS)
 # ==========================================
 st.markdown("---")
 st.subheader("💡 Los 4 Porqués del Análisis")
@@ -253,5 +282,5 @@ with st.expander("2. ¿Por qué varía el margen de porcentaje mes a mes?"):
     st.write("Refleja el flujo operativo. Subidas en rojo en la matriz indican expansión de gastos fuera de la media esperada del periodo anterior.")
 with st.expander("3. ¿Por qué la tendencia histórica anual difiere de la mensual?"):
     st.write("El análisis mensual presenta fluctuaciones cíclicas a corto plazo. Si analizamos la tendencia global por cuenta, observamos el crecimiento estructural real.")
-with st.expander("4. ¿Por qué la proyección de algunas cuentas marca un alza sostenida?"):
-    st.write("Al analizar el volumen consolidado, el modelo detecta que los gastos en las cuentas top superan las reducciones históricas, marcando una tendencia agregada al alza.")
+with st.expander("4. ¿Por qué la proyección algorítmica marca esa tendencia?"):
+    st.write("Al analizar el volumen consolidado mediante regresión lineal, el modelo detecta la aceleración de los gastos en el tiempo. Si la curva supera las reducciones históricas, el algoritmo proyecta un alza agregada para el periodo siguiente.")
