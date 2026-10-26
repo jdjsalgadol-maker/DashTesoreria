@@ -17,7 +17,7 @@ def check_access():
     clave = st.sidebar.text_input("Ingrese su clave de acceso:", type="password")
     
     if not clave:
-        st.warning("Por favor, ingrese una clave para acceder al panel.")
+        st.sidebar.warning("Por favor, ingrese una clave para acceder al panel.")
         st.stop()
         
     if clave == "basico123":
@@ -50,12 +50,23 @@ def check_access():
 check_access()
 
 # ==========================================
-# CARGA Y PREPARACIÓN DE DATOS
+# CARGA DE ARCHIVO DINÁMICO
+# ==========================================
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 Carga de Datos")
+archivo_subido = st.sidebar.file_uploader("Suba su archivo Excel (gast.xlsx / gast_2.xlsx)", type=["xlsx", "xls"])
+
+if archivo_subido is None:
+    st.info("👋 ¡Bienvenido! Por favor, cargue un archivo Excel en el panel izquierdo para visualizar el dashboard.")
+    st.stop() # Detiene la ejecución hasta que se suba el archivo
+
+# ==========================================
+# PREPARACIÓN DE DATOS
 # ==========================================
 @st.cache_data
-def load_data():
-    # Intenta cargar el archivo gast_2.xlsx
-    df = pd.read_excel("gast_2.xlsx")
+def load_data(file):
+    # Lee el archivo subido en lugar de un archivo local fijo
+    df = pd.read_excel(file)
     df.columns = df.columns.str.strip()
     
     if 'Fe/contab/' in df.columns:
@@ -69,12 +80,13 @@ def load_data():
         
     return df
 
-with st.spinner("Cargando base de datos..."):
-    df = load_data()
+with st.spinner("Procesando archivo..."):
+    df = load_data(archivo_subido)
 
 # ==========================================
 # PANEL IZQUIERDO Y FILTROS
 # ==========================================
+st.sidebar.markdown("---")
 st.sidebar.title("🎛️ Filtros")
 
 fecha_inicio, fecha_fin = st.sidebar.date_input(
