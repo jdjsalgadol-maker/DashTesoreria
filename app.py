@@ -102,7 +102,7 @@ if 'Fecha' not in df.columns or 'Importe en ML' not in df.columns:
     st.stop()
 
 # ==========================================
-# PANEL IZQUIERDO Y FILTROS
+# PANEL IZQUIERDO Y FILTROS LATERALES
 # ==========================================
 st.sidebar.markdown("---")
 st.sidebar.title("🎛️ Filtros y Controles")
@@ -132,11 +132,37 @@ if opciones_cuenta:
     mask = mask & (df[col_cuenta].isin(opciones_cuenta))
 df_filtrado = df[mask]
 
+# ==========================================
+# PANEL PRINCIPAL Y SEGMENTADOR DE TIPO (COL N)
+# ==========================================
 st.title("📊 Análisis Dinámico de Gastos")
+
+# Buscar la columna N o la columna que se llame "Tipo"
+col_tipo = None
+for col in ['Tipo', 'TIPO', 'N Tipo', 'Tipo de cuenta']:
+    if col in df.columns:
+        col_tipo = col
+        break
+
+# Si no la encuentra por nombre, toma por defecto la columna N (índice 13) si existe
+if not col_tipo and len(df.columns) > 13:
+    col_tipo = df.columns[13]
+
+if col_tipo:
+    # Segmentador en el panel principal
+    st.subheader(f"🗂️ Segmentador Principal ({col_tipo})")
+    opciones_tipo = st.multiselect(
+        f"Seleccione las opciones de {col_tipo} para filtrar todo el dashboard:", 
+        df_filtrado[col_tipo].dropna().unique()
+    )
+    # Si el usuario selecciona opciones en el panel principal, aplicamos el filtro al dataframe
+    if opciones_tipo:
+        df_filtrado = df_filtrado[df_filtrado[col_tipo].isin(opciones_tipo)]
+
 st.markdown("---")
 
 # ==========================================
-# 1. ANÁLISIS DE TENDENCIAS Y COMPOSICIÓN (CON ETIQUETAS)
+# 1. ANÁLISIS DE TENDENCIAS Y COMPOSICIÓN 
 # ==========================================
 st.subheader("📈 Evolución y Composición (Por Cuenta)")
 
@@ -152,7 +178,6 @@ if col_cuenta:
     
     col1, col2 = st.columns(2)
     with col1:
-        # Gráfico de líneas con etiquetas de texto en los puntos
         fig_line = px.line(
             df_tendencia, x='Periodo', y='Importe en ML', color='Agrupación Cuenta', 
             text='Importe en ML', title="Evolución Total Consolidada por Cuenta", markers=True
@@ -162,7 +187,6 @@ if col_cuenta:
         st.plotly_chart(fig_line, use_container_width=True)
         
     with col2:
-        # Gráfico de barras apiladas horizontales con etiquetas activadas
         fig_bar = px.bar(
             df_tendencia, x='Importe en ML', y='Periodo', color='Agrupación Cuenta', 
             text_auto='.2s', title="Composición del Gasto por Periodo", barmode='stack', orientation='h'
@@ -183,13 +207,8 @@ for col in ['Clave referencia 3', 'Tercero', 'Referencia']:
         break
 
 if col_ref:
-    # Obtener el Top 15 de referencias con más volumen global
     top_refs = df_filtrado.groupby(col_ref)['Importe en ML'].sum().nlargest(15).index.tolist()
-    
-    # Agrupar los datos del Top 15 por Referencia y Periodo (para hacer el stack/apilado)
     df_ref_stacked = df_filtrado[df_filtrado[col_ref].isin(top_refs)].groupby([col_ref, 'Periodo'])['Importe en ML'].sum().reset_index()
-    
-    # Ordenar el eje Y globalmente para que el mayor quede arriba
     orden_total = df_filtrado.groupby(col_ref)['Importe en ML'].sum().loc[top_refs].sort_values(ascending=True).index.tolist()
     
     fig_bar_ref = px.bar(
@@ -197,7 +216,6 @@ if col_ref:
         orientation='h', title=f"Total por {col_ref} Apilado por Periodo (Top 15)",
         text_auto='.2s'
     )
-    # Ajustar para que las barras más grandes estén en la parte superior y se oculten las cuadriculas innecesarias
     fig_bar_ref.update_layout(
         yaxis={'categoryorder':'array', 'categoryarray': orden_total},
         xaxis_showgrid=True, yaxis_showgrid=False,
