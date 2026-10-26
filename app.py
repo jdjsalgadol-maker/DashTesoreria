@@ -10,7 +10,7 @@ import time
 st.set_page_config(page_title="Dashboard Analítico de Gastos", page_icon="📈", layout="wide")
 
 # ==========================================
-# CONTROL DE ACCESO (BÁSICO VS PREMIUM)
+# CONTROL DE ACCESO
 # ==========================================
 def check_access():
     st.sidebar.title("🔐 Acceso al Dashboard")
@@ -58,29 +58,53 @@ archivo_subido = st.sidebar.file_uploader("Suba su archivo Excel (gast.xlsx / ga
 
 if archivo_subido is None:
     st.info("👋 ¡Bienvenido! Por favor, cargue un archivo Excel en el panel izquierdo para visualizar el dashboard.")
-    st.stop() # Detiene la ejecución hasta que se suba el archivo
+    st.stop()
 
 # ==========================================
-# PREPARACIÓN DE DATOS
+# PREPARACIÓN DE DATOS (FLEXIBLE)
 # ==========================================
 @st.cache_data
 def load_data(file):
     df = pd.read_excel(file)
     df.columns = df.columns.str.strip()
     
-    if 'Fe/contab/' in df.columns:
-        df['Fecha'] = pd.to_datetime(df['Fe/contab/'], errors='coerce')
+    # 1. Búsqueda inteligente de la columna de Fecha
+    col_fecha = None
+    posibles_fechas = ['Fe/contab/', 'Fecha doc/', 'Fecha', 'FECHA', 'Date']
+    for col in posibles_fechas:
+        if col in df.columns:
+            col_fecha = col
+            break
+            
+    if col_fecha:
+        df['Fecha'] = pd.to_datetime(df[col_fecha], errors='coerce')
+        # Limpiar filas sin fecha válida
+        df = df.dropna(subset=['Fecha'])
         df['Año'] = df['Fecha'].dt.year
         df['Mes'] = df['Fecha'].dt.month
         df['Periodo'] = df['Fecha'].dt.to_period('M').astype(str)
         
-    if 'Importe en ML' in df.columns:
-        df['Importe en ML'] = pd.to_numeric(df['Importe en ML'], errors='coerce').fillna(0)
+    # 2. Búsqueda inteligente de la columna de Importe
+    col_importe = None
+    posibles_importes = ['Importe en ML', 'Valor', 'Importe', 'Total', 'VALOR TOTAL']
+    for col in posibles_importes:
+        if col in df.columns:
+            col_importe = col
+            break
+            
+    if col_importe:
+        df['Importe en ML'] = pd.to_numeric(df[col_importe], errors='coerce').fillna(0)
         
     return df
 
 with st.spinner("Procesando archivo..."):
     df = load_data(archivo_subido)
+
+# Verificación de seguridad si las columnas no existen
+if 'Fecha' not in df.columns or 'Importe en ML' not in df.columns:
+    st.error(f"❌ El archivo subido no tiene el formato esperado. Columnas detectadas: {', '.join(df.columns)}")
+    st.warning("Asegúrese de que su archivo contenga una columna para Fechas (ej: 'Fecha' o 'Fe/contab/') y otra para Valores (ej: 'Importe en ML' o 'Valor').")
+    st.stop()
 
 # ==========================================
 # PANEL IZQUIERDO Y FILTROS
@@ -93,12 +117,19 @@ fecha_inicio, fecha_fin = st.sidebar.date_input(
     [df['Fecha'].min().date(), df['Fecha'].max().date()]
 )
 
-columnas_segmentacion = ['Nombre cuenta', 'Clave referencia 3', 'Cuenta', 'CT']
-segmentador_seleccionado = st.sidebar.selectbox("Segmentar datos por:", [c for c in columnas_segmentacion if c in df.columns])
-opciones_segmento = st.sidebar.multiselect(f"Seleccione {segmentador_seleccionado}:", df[segmentador_seleccionado].dropna().unique())
+columnas_segmentacion = ['Nombre cuenta', 'Clave referencia 3', 'Cuenta', 'CT', 'Concepto']
+columnas_validas = [c for c in columnas_segmentacion if c in df.columns]
 
+segmentador_seleccionado = None
+if columnas_validas:
+    segmentador_seleccionado = st.sidebar.selectbox("Segmentar datos por:", columnas_validas)
+    opciones_segmento = st.sidebar.multiselect(f"Seleccione {segmentador_seleccionado}:", df[segmentador_seleccionado].dropna().unique())
+else:
+    opciones_segmento = []
+
+# Filtrado del dataframe
 mask = (df['Fecha'].dt.date >= fecha_inicio) & (df['Fecha'].dt.date <= fecha_fin)
-if opciones_segmento:
+if opciones_segmento and segmentador_seleccionado:
     mask = mask & (df[segmentador_seleccionado].isin(opciones_segmento))
 df_filtrado = df[mask]
 
@@ -106,36 +137,35 @@ st.title("📊 Análisis Dinámico de Gastos")
 st.markdown("---")
 
 # ==========================================
-# 1. ANÁLISIS DE TENDENCIAS (VERSIÓN LIMPIA TOP 5)
+# 1. ANÁLISIS DE TENDENCIAS
 # ==========================================
 st.subheader("📈 Evolución y Tendencias")
-if 'Clave referencia 3' in df_filtrado.columns:
+
+# Usar 'Clave referencia 3' u otra columna descriptiva disponible
+col_agrupacion = 'Clave referencia 3' if 'Clave referencia 3' in df_filtrado.columns else (columnas_validas[0] if columnas_validas else None)
+
+if col_agrupacion:
+    top_bancos = df_filtrado.groupby(col_agrupacion)['Importe en ML'].sum().nlargest(5).index.tolist()
     
-    # 1. Identificar el Top 5 de bancos con mayor volumen
-    top_bancos = df_filtrado.groupby('Clave referencia 3')['Importe en ML'].sum().nlargest(5).index.tolist()
-    
-    # 2. Agrupar el resto en "OTROS" para limpiar el gráfico
     df_graficos = df_filtrado.copy()
-    df_graficos['Banco Agrupado'] = df_graficos['Clave referencia 3'].apply(
+    df_graficos['Agrupación'] = df_graficos[col_agrupacion].apply(
         lambda x: x if x in top_bancos else 'OTROS (Menor volumen)'
     )
     
-    # 3. Preparar datos consolidados
-    df_tendencia = df_graficos.groupby(['Periodo', 'Banco Agrupado'])['Importe en ML'].sum().reset_index()
+    df_tendencia = df_graficos.groupby(['Periodo', 'Agrupación'])['Importe en ML'].sum().reset_index()
     
     col1, col2 = st.columns(2)
     with col1:
         fig_line = px.line(
-            df_tendencia, x='Periodo', y='Importe en ML', color='Banco Agrupado', 
-            title="Variaciones Mensuales (Top 5 Entidades)", markers=True
+            df_tendencia, x='Periodo', y='Importe en ML', color='Agrupación', 
+            title="Variaciones Mensuales (Top 5)", markers=True
         )
-        # Ocultar la cuadrícula de fondo para mayor limpieza
         fig_line.update_layout(xaxis_showgrid=False, yaxis_showgrid=True)
         st.plotly_chart(fig_line, use_container_width=True)
         
     with col2:
         fig_bar = px.bar(
-            df_tendencia, x='Periodo', y='Importe en ML', color='Banco Agrupado', 
+            df_tendencia, x='Periodo', y='Importe en ML', color='Agrupación', 
             title="Composición del Gasto", barmode='stack'
         )
         fig_bar.update_layout(xaxis_showgrid=False, yaxis_showgrid=True)
