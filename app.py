@@ -68,7 +68,6 @@ def load_data(file):
     df = pd.read_excel(file)
     df.columns = df.columns.str.strip()
     
-    # Búsqueda inteligente de la columna de Fecha
     col_fecha = None
     posibles_fechas = ['Fe/contab/', 'Fecha doc/', 'Fecha', 'FECHA', 'Date']
     for col in posibles_fechas:
@@ -83,7 +82,6 @@ def load_data(file):
         df['Mes'] = df['Fecha'].dt.month
         df['Periodo'] = df['Fecha'].dt.to_period('M').astype(str)
         
-    # Búsqueda inteligente de la columna de Importe
     col_importe = None
     posibles_importes = ['Importe en ML', 'Valor', 'Importe', 'Total', 'VALOR TOTAL']
     for col in posibles_importes:
@@ -109,36 +107,26 @@ if 'Fecha' not in df.columns or 'Importe en ML' not in df.columns:
 st.sidebar.markdown("---")
 st.sidebar.title("🎛️ Filtros y Controles")
 
-# --- SLIDER DE FECHAS ---
 st.sidebar.subheader("📅 Rango de Tiempo")
 min_date = df['Fecha'].min().date()
 max_date = df['Fecha'].max().date()
 
 fecha_inicio, fecha_fin = st.sidebar.slider(
     "Seleccione el periodo de análisis:",
-    min_value=min_date,
-    max_value=max_date,
-    value=(min_date, max_date),
-    format="YYYY-MM-DD"
+    min_value=min_date, max_value=max_date, value=(min_date, max_date), format="YYYY-MM-DD"
 )
 
-# --- SEGMENTADOR POR NOMBRE DE CUENTA ---
 st.sidebar.subheader("🏷️ Tipo de Cuenta")
 col_cuenta = None
-posibles_cuentas = ['Nombre cuenta', 'Cuenta', 'Concepto']
-for col in posibles_cuentas:
+for col in ['Nombre cuenta', 'Cuenta', 'Concepto']:
     if col in df.columns:
         col_cuenta = col
         break
 
 opciones_cuenta = []
 if col_cuenta:
-    opciones_cuenta = st.sidebar.multiselect(
-        f"Filtrar por {col_cuenta}:", 
-        df[col_cuenta].dropna().unique()
-    )
+    opciones_cuenta = st.sidebar.multiselect(f"Filtrar por {col_cuenta}:", df[col_cuenta].dropna().unique())
 
-# Filtrado del dataframe
 mask = (df['Fecha'].dt.date >= fecha_inicio) & (df['Fecha'].dt.date <= fecha_fin)
 if opciones_cuenta:
     mask = mask & (df[col_cuenta].isin(opciones_cuenta))
@@ -148,7 +136,7 @@ st.title("📊 Análisis Dinámico de Gastos")
 st.markdown("---")
 
 # ==========================================
-# 1. ANÁLISIS DE TENDENCIAS Y COMPOSICIÓN
+# 1. ANÁLISIS DE TENDENCIAS Y COMPOSICIÓN (CON ETIQUETAS)
 # ==========================================
 st.subheader("📈 Evolución y Composición (Por Cuenta)")
 
@@ -164,67 +152,59 @@ if col_cuenta:
     
     col1, col2 = st.columns(2)
     with col1:
-        # GRAFICO DE LÍNEAS CONSOLIDADO POR CUENTA
+        # Gráfico de líneas con etiquetas de texto en los puntos
         fig_line = px.line(
             df_tendencia, x='Periodo', y='Importe en ML', color='Agrupación Cuenta', 
-            title="Evolución Total Consolidada por Cuenta", markers=True
+            text='Importe en ML', title="Evolución Total Consolidada por Cuenta", markers=True
         )
+        fig_line.update_traces(textposition="top center", texttemplate='%{text:.2s}')
         fig_line.update_layout(xaxis_showgrid=False, yaxis_showgrid=True, legend_title="Cuentas")
         st.plotly_chart(fig_line, use_container_width=True)
         
     with col2:
-        # GRAFICO DE BARRAS HORIZONTALES
+        # Gráfico de barras apiladas horizontales con etiquetas activadas
         fig_bar = px.bar(
             df_tendencia, x='Importe en ML', y='Periodo', color='Agrupación Cuenta', 
-            title="Composición del Gasto", barmode='stack', orientation='h'
+            text_auto='.2s', title="Composición del Gasto por Periodo", barmode='stack', orientation='h'
         )
         fig_bar.update_layout(xaxis_showgrid=True, yaxis_showgrid=False, yaxis={'categoryorder':'category descending'}, legend_title="Cuentas")
         st.plotly_chart(fig_bar, use_container_width=True)
 
 # ==========================================
-# 2. DISTRIBUCIÓN TOTAL POR COLUMNA B (REFERENCIA)
+# 2. BARRAS APILADAS HORIZONTALES PARA COLUMNA B
 # ==========================================
 st.markdown("---")
 st.subheader("🏢 Distribución Total por Referencia (Columna B)")
 
-# Buscar la columna que corresponde a "Clave referencia 3"
 col_ref = None
-posibles_refs = ['Clave referencia 3', 'Tercero', 'Referencia']
-for col in posibles_refs:
+for col in ['Clave referencia 3', 'Tercero', 'Referencia']:
     if col in df_filtrado.columns:
         col_ref = col
         break
 
 if col_ref:
-    # Agrupar los importes por la Referencia
-    df_ref = df_filtrado.groupby(col_ref)['Importe en ML'].sum().reset_index()
-    df_ref = df_ref.sort_values(by='Importe en ML', ascending=False)
+    # Obtener el Top 15 de referencias con más volumen global
+    top_refs = df_filtrado.groupby(col_ref)['Importe en ML'].sum().nlargest(15).index.tolist()
     
-    # Para mantener el gráfico limpio, agrupamos en el Top 15 (Recomendado en visualización de datos)
-    top_n = 15
-    if len(df_ref) > top_n:
-        df_top_ref = df_ref.iloc[:top_n]
-        otros_valor = df_ref.iloc[top_n:]['Importe en ML'].sum()
-        df_otros = pd.DataFrame({col_ref: ['OTROS (Resto agrupado)'], 'Importe en ML': [otros_valor]})
-        df_ref_final = pd.concat([df_top_ref, df_otros], ignore_index=True)
-    else:
-        df_ref_final = df_ref
-
-    # GRÁFICO RECOMENDADO: Treemap (Mapa de Árbol)
-    # Es la visualización en Python preferida para ver composición de totales sin hacer barras interminables
-    fig_treemap = px.treemap(
-        df_ref_final, 
-        path=[px.Constant("Total Gastos"), col_ref], 
-        values='Importe en ML',
-        title=f"Proporción del Gasto Histórico por {col_ref} (Treemap)",
-        color='Importe en ML',
-        color_continuous_scale='Blues' # Escala de colores profesional
+    # Agrupar los datos del Top 15 por Referencia y Periodo (para hacer el stack/apilado)
+    df_ref_stacked = df_filtrado[df_filtrado[col_ref].isin(top_refs)].groupby([col_ref, 'Periodo'])['Importe en ML'].sum().reset_index()
+    
+    # Ordenar el eje Y globalmente para que el mayor quede arriba
+    orden_total = df_filtrado.groupby(col_ref)['Importe en ML'].sum().loc[top_refs].sort_values(ascending=True).index.tolist()
+    
+    fig_bar_ref = px.bar(
+        df_ref_stacked, x='Importe en ML', y=col_ref, color='Periodo',
+        orientation='h', title=f"Total por {col_ref} Apilado por Periodo (Top 15)",
+        text_auto='.2s'
     )
-    # Mostrar el porcentaje además del valor
-    fig_treemap.update_traces(textinfo="label+value+percent parent")
-    fig_treemap.update_layout(margin=dict(t=50, l=10, r=10, b=10))
+    # Ajustar para que las barras más grandes estén en la parte superior y se oculten las cuadriculas innecesarias
+    fig_bar_ref.update_layout(
+        yaxis={'categoryorder':'array', 'categoryarray': orden_total},
+        xaxis_showgrid=True, yaxis_showgrid=False,
+        height=500
+    )
     
-    st.plotly_chart(fig_treemap, use_container_width=True)
+    st.plotly_chart(fig_bar_ref, use_container_width=True)
 else:
     st.info("No se detectó la Columna B ('Clave referencia 3') en el archivo cargado para generar este gráfico.")
 
@@ -250,7 +230,7 @@ st.dataframe(df_matriz.style.map(color_variacion, subset=['Variación %']).forma
 st.markdown("---")
 st.subheader("💡 Los 4 Porqués del Análisis")
 with st.expander("1. ¿Por qué se observan picos atípicos en ciertos meses?"):
-    st.write("Están correlacionados con la estacionalidad de las cuentas y pagos extraordinarios. Verifique el Treemap (Columna B) para identificar exactamente a qué proveedores se les atribuye el mayor volumen de gastos.")
+    st.write("Están correlacionados con la estacionalidad de las cuentas y pagos extraordinarios. Verifique el gráfico de barras inferior (Columna B) para identificar exactamente a qué proveedores/referencias se les atribuye el mayor volumen de gastos en dicho mes.")
 with st.expander("2. ¿Por qué varía el margen de porcentaje mes a mes?"):
     st.write("Refleja el flujo operativo. Subidas en rojo en la matriz indican expansión de gastos fuera de la media esperada del periodo anterior.")
 with st.expander("3. ¿Por qué la tendencia histórica anual difiere de la mensual?"):
