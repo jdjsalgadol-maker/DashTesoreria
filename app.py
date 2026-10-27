@@ -385,4 +385,4 @@ with col_chat:
         with st.chat_message("assistant"):
             st.write(respuesta)
     else:
-        st.info("💬 **Asistente Preparado:** Extraigo insights, justifico variaciones y calculo totales. ¿Qué desea auditar hoy?")
+        st.info("💬 **Asistente Preparado:** Aclaraciones sobre rubros")
