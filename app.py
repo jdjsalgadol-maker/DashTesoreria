@@ -1,27 +1,43 @@
+import os
+import time
+
+# =============================================================================
+# 0. AUTO-CONFIGURACIÓN DEL TEMA NATIVO (ELIMINA EL ROJO DE RAÍZ)
+# =============================================================================
+def setup_theme():
+    """Genera el archivo config.toml para forzar el Azul Corporativo en los widgets."""
+    os.makedirs(".streamlit", exist_ok=True)
+    config_path = ".streamlit/config.toml"
+    theme_config = '[theme]\nprimaryColor="#1F618D"\n'
+    
+    # Escribe la configuración si no existe
+    if not os.path.exists(config_path):
+        with open(config_path, "w") as f:
+            f.write(theme_config)
+
+setup_theme()
+
+# Importamos Streamlit DESPUÉS de configurar el tema
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import time
 import re
 import unicodedata
-import io
-import os
 
 # =============================================================================
-# 1. CONSTANTES Y PALETA CORPORATIVA (ESCALA AZUL/GRIS - SIN ROJOS)
+# 1. CONSTANTES Y PALETA CORPORATIVA (ESCALA AZUL/GRIS ESTRICTA)
 # =============================================================================
 APP_TITULO = "Dashboard Analítico de Tesorería"
 LIMITE_BASICO_S = 60
 
-# Paleta ejecutiva estricta
-CORP_BLUE = "#1F618D"       # Azul corporativo principal (Barras, chips, bordes)
+# Paleta Ejecutiva (0% Rojo)
+CORP_BLUE = "#1F618D"       # Azul corporativo principal (Barras, bordes)
 CORP_BLUE_SOFT = "#D4E6F1"  # Azul claro (Barras no seleccionadas)
-CORP_GRAY = "#34495E"       # Gris pizarra oscuro (Textos, controles, alertas)
+CORP_GRAY = "#34495E"       # Gris pizarra (Textos, controles, alzas de gasto)
 BG_LIGHT = "#F8F9F9"        # Fondo neutro
-
-BAJA = "#1B7A3A"   # Verde (Solo para variaciones positivas/ahorros)
+BAJA = "#1B7A3A"            # Verde (Solo para variaciones positivas/ahorros)
 
 MESES_LARGO = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo",
@@ -34,22 +50,14 @@ NAT_GASTO = "Gasto"
 NAT_MENOR = "Menor gasto / Ingreso"
 
 ALIAS_ENTIDAD = {
-    "BANCOLOMBIA S A": "Bancolombia",
-    "BANCOLOMBIA PANAMA S": "Bancolombia Panamá",
-    "VALORES BANCOLOMBIA": "Valores Bancolombia",
-    "BANCO BILBAO VIZCAYA": "BBVA Colombia",
-    "BANCO DAVIVIENDA S A": "Davivienda",
-    "BANCO DAVIBANK S A": "Davibank",
-    "BANCO DE OCCIDENTE": "Banco de Occidente",
-    "BANCO COMERCIAL AV V": "Banco AV Villas",
-    "BANCO DE BOGOTA PANA": "Banco de Bogotá Panamá",
-    "BANCO DE BOGOTA": "Banco de Bogotá",
-    "BANCO GNB SUDAMERIS": "GNB Sudameris",
-    "GNB SUDAMERIS": "GNB Sudameris",
-    "BANCO AGRARIO DE COL": "Banco Agrario",
-    "BANCO CAJA SOCIAL S": "Banco Caja Social",
-    "BANCO ITAU COLOMBIA": "Itaú",
-    "ITAU COLOMBIA S A": "Itaú",
+    "BANCOLOMBIA S A": "Bancolombia", "BANCOLOMBIA PANAMA S": "Bancolombia Panamá",
+    "VALORES BANCOLOMBIA": "Valores Bancolombia", "BANCO BILBAO VIZCAYA": "BBVA Colombia",
+    "BANCO DAVIVIENDA S A": "Davivienda", "BANCO DAVIBANK S A": "Davibank",
+    "BANCO DE OCCIDENTE": "Banco de Occidente", "BANCO COMERCIAL AV V": "Banco AV Villas",
+    "BANCO DE BOGOTA PANA": "Banco de Bogotá Panamá", "BANCO DE BOGOTA": "Banco de Bogotá",
+    "BANCO GNB SUDAMERIS": "GNB Sudameris", "GNB SUDAMERIS": "GNB Sudameris",
+    "BANCO AGRARIO DE COL": "Banco Agrario", "BANCO CAJA SOCIAL S": "Banco Caja Social",
+    "BANCO ITAU COLOMBIA": "Itaú", "ITAU COLOMBIA S A": "Itaú",
 }
 
 # =============================================================================
@@ -137,6 +145,7 @@ def analizar_tendencia(serie: pd.Series) -> dict:
     pend, _ = np.polyfit(x, y, 1)
     umbral = 0.015 * media
     
+    # Se eliminan los tonos rojos de las tendencias
     if pend > umbral: return {"estado": "📈 Alcista (Expansión)", "color": CORP_GRAY}
     elif pend < -umbral: return {"estado": "📉 Bajista (Contracción)", "color": BAJA}
     else: return {"estado": "➡️ Estable (Controlado)", "color": CORP_GRAY}
@@ -146,6 +155,7 @@ def analizar_tendencia(serie: pd.Series) -> dict:
 # =============================================================================
 st.set_page_config(page_title=APP_TITULO, page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
+# CSS de respaldo para asegurar los elementos visuales en Azul y Gris
 st.markdown(f'''
     <style>
     .titulo-panel {{
@@ -154,9 +164,7 @@ st.markdown(f'''
         border-radius: 8px; margin-bottom: 20px; font-size: 18px;
         box-shadow: 0px 4px 10px rgba(0,0,0,0.15); letter-spacing: 0.5px;
     }}
-    .stSlider > div > div > div > div {{ background-color: {CORP_BLUE} !important; }}
     div[data-testid="stThumbValue"] {{ background-color: {CORP_GRAY} !important; color: #FFFFFF !important; font-weight: bold; border-radius: 4px; }}
-    span[data-baseweb="tag"] {{ background-color: {CORP_BLUE} !important; color: white !important; border-radius: 4px; }}
     div[data-testid="metric-container"] {{
         background-color: #ffffff; border: 1px solid #EAECEE; border-radius: 10px; 
         padding: 20px; box-shadow: 0px 4px 15px rgba(0,0,0,0.04);
@@ -180,11 +188,11 @@ def check_password():
     elif pwd == "premium123":
         st.session_state.authenticated, st.session_state.user_type, st.session_state.login_time = True, "Premium", time.time()
     else:
-        # st.warning elimina el fondo rojo de error nativo de Streamlit
         st.warning("⚠️ Clave incorrecta. Intente nuevamente.")
 
 if not st.session_state.authenticated:
     st.title("🔐 Portal de Inteligencia Financiera")
+    st.write("Ingrese sus credenciales corporativas para acceder al cuadro de mando.")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.text_input("Clave de acceso:", type="password", key="password")
@@ -309,7 +317,7 @@ with col_var:
         df_mostrar.columns = ['Periodo', 'Importe Total', 'Variación vs Anterior (%)']
         def highlight_var(val):
             if pd.isna(val): return ''
-            # Se usa CORP_GRAY para subidas en lugar del antiguo rojo, manteniendo el verde para ahorros
+            # Tonos estrictamente corporativos (Gris oscuro para alzas, Verde para bajas)
             return f'color: {CORP_GRAY}; font-weight: 600;' if val > 0 else f'color: {BAJA}; font-weight: 600;'
         st.dataframe(df_mostrar.style.format({'Importe Total': lambda x: f"${x:,.0f}", 'Variación vs Anterior (%)': lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"}).map(highlight_var, subset=['Variación vs Anterior (%)']), use_container_width=True, height=350)
     else:
