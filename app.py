@@ -63,13 +63,6 @@ MESES_LARGO = {
 MESES_ABR = {k: v[:3] for k, v in MESES_LARGO.items()}
 COL_FECHA = ("Fe-contab-", "Fe/contab/", "Fe.contab.", "Fe-contab")
 SIN_DESCRIPCION = "(Sin descripción)"
-NAT_GASTO = "Gasto"
-NAT_MENOR = "Menor gasto / Ingreso"
-OPCIONES_NAT = {
-    "Todo (valor absoluto)": None,
-    "Solo gasto": NAT_GASTO,
-    "Solo menor gasto / ingreso": NAT_MENOR,
-}
 
 # Alias de entidades: el campo origen viene truncado a 20 caracteres.
 ALIAS_ENTIDAD = {
@@ -203,7 +196,6 @@ def preparar_datos(crudo: pd.DataFrame) -> pd.DataFrame:
         errors="coerce")
     out["Importe_Neto"] = neto                      # precisión contable (con signo)
     out["Importe"] = pd.to_numeric(df[col_imp], errors="coerce").abs()  # gráficos
-    out["Naturaleza"] = np.where(neto < 0, NAT_MENOR, NAT_GASTO)
     out["Rubro"] = (df["Nombre cuenta"] if "Nombre cuenta" in df.columns
                     else pd.Series("Sin rubro", index=df.index))
     out["Rubro"] = out["Rubro"].fillna("Sin rubro").astype(str).str.strip().str.title()
@@ -237,7 +229,6 @@ class Filtros:
     anios: tuple
     meses: tuple
     tipos: tuple
-    naturaleza: str | None = None
     focos: tuple = ()        # rubros seleccionados (filtro cruzado / comparativa)
     focos_ent: tuple = ()    # entidades seleccionadas (filtro cruzado / comparativa)
 
@@ -246,8 +237,6 @@ def filtrar(df: pd.DataFrame, f: Filtros, periodo: bool = True,
             rubro: bool = True, entidad: bool = True) -> pd.DataFrame:
     """Aplica filtros globales; ``rubro``/``entidad`` activan el foco cruzado."""
     mask = df["Tipo"].isin(f.tipos)
-    if f.naturaleza:
-        mask &= df["Naturaleza"].eq(f.naturaleza)
     if periodo:
         mask &= df["Año"].between(*f.anios) & df["Mes"].isin(f.meses)
     if rubro and f.focos:
@@ -321,13 +310,9 @@ def resumen_rubros(df: pd.DataFrame) -> pd.DataFrame:
     g = df.groupby("Rubro").agg(
         Importe=("Importe", "sum"), Registros=("Importe", "size"),
         Neto=("Importe_Neto", "sum"))
-    g["Gasto bruto"] = df[df["Naturaleza"] == NAT_GASTO].groupby("Rubro")["Importe"].sum()
-    g["Menor gasto / Ingreso"] = (
-        df[df["Naturaleza"] == NAT_MENOR].groupby("Rubro")["Importe"].sum())
     g = g.fillna(0).sort_values("Importe", ascending=False)
     g["% del total"] = g["Importe"] / g["Importe"].sum() * 100 if g["Importe"].sum() else 0
-    return g.reset_index()[["Rubro", "Importe", "% del total", "Gasto bruto",
-                            "Menor gasto / Ingreso", "Neto", "Registros"]]
+    return g.reset_index()[["Rubro", "Importe", "% del total", "Neto", "Registros"]]
 
 
 # =============================================================================
@@ -432,28 +417,6 @@ def fig_barras(serie: pd.Series, seleccion: tuple = (), alto: int = 380) -> go.F
     fig.update_yaxes(title=None, showgrid=False, automargin=True,
                      tickfont=dict(color=INK, size=12))
     fig.update_layout(clickmode="event+select", bargap=0.35)
-    return fig
-
-
-def fig_naturaleza(df: pd.DataFrame) -> go.Figure:
-    """Gasto bruto vs. menor gasto / ingreso por mes."""
-    p = df.pivot_table(index="Periodo", columns="Naturaleza", values="Importe",
-                       aggfunc="sum", fill_value=0).sort_index()
-    for col in (NAT_GASTO, NAT_MENOR):
-        if col not in p:
-            p[col] = 0.0
-    x = [etiqueta_periodo(i) for i in p.index]
-    fig = go.Figure()
-    for col, color in ((NAT_GASTO, BLUE), (NAT_MENOR, "#85929E")):
-        fig.add_trace(go.Bar(
-            x=x, y=p[col].to_numpy(), name=col, marker_color=color,
-            customdata=[fmt(v) for v in p[col]],
-            hovertemplate="<b>%{x}</b><br>" + col + ": %{customdata}<extra></extra>"))
-    _estilo(fig, 340, leyenda=True)
-    fig.update_layout(barmode="group", bargap=0.25)
-    fig.update_xaxes(type="category", tickangle=-45 if len(x) > 10 else 0,
-                     tickfont=dict(color=INK, size=11), linecolor=BORDE)
-    _eje_monetario(fig, float(p.to_numpy().max()) * 1.1 or 1)
     return fig
 
 
@@ -791,10 +754,7 @@ def sidebar_filtros(df: pd.DataFrame) -> Filtros:
     panel("Origen de cuenta", mini=True, destino=sb)
     tipos = tuple(t for t in sorted(df["Tipo"].unique())
                   if sb.checkbox(str(t), value=True, key=f"f_tipo_{t}"))
-    panel("Naturaleza contable", mini=True, destino=sb)
-    nat = sb.radio("Naturaleza", list(OPCIONES_NAT), label_visibility="collapsed")
-    return Filtros(anios=tuple(anios), meses=meses_ids, tipos=tipos,
-                   naturaleza=OPCIONES_NAT[nat])
+    return Filtros(anios=tuple(anios), meses=meses_ids, tipos=tipos)
 
 
 # =============================================================================
@@ -1320,9 +1280,7 @@ def _motor_periodo(df: pd.DataFrame, periodo: str) -> str:
         return ""
     tot = float(sub["Importe"].sum())
     rub = sub.groupby("Rubro")["Importe"].sum().sort_values(ascending=False)
-    menor = sub.loc[sub["Naturaleza"] == NAT_MENOR, "Importe"].sum() / tot * 100
-    txt = (f"rubro dominante: **{rub.index[0]}** ({pct_txt(rub.iloc[0] / tot * 100)} del mes); "
-           f"{pct_txt(menor)} del importe del mes es ingreso / menor gasto")
+    txt = f"rubro dominante: **{rub.index[0]}** ({pct_txt(rub.iloc[0] / tot * 100)} del mes)"
     fila = sub.loc[sub["Importe"].idxmax()]
     if fila["Importe"] / tot >= 0.2:
         signo = "ingreso" if fila["Importe_Neto"] < 0 else "gasto"
@@ -1396,8 +1354,6 @@ def h_resumen(ctx: Ctx, c: Consulta) -> Respuesta:
     if df.empty:
         return _vacio(a)
     total = df["Importe"].sum()
-    gasto = df.loc[df["Naturaleza"] == NAT_GASTO, "Importe"].sum()
-    menor = df.loc[df["Naturaleza"] == NAT_MENOR, "Importe"].sum()
     neto = df["Importe_Neto"].sum()
     s = serie_mensual(df)
     tend = analizar_tendencia(s)
@@ -1406,10 +1362,7 @@ def h_resumen(ctx: Ctx, c: Consulta) -> Respuesta:
     lineas = [
         f"**Importe acumulado:** {money(total)} en {len(s)} mes(es), media de "
         f"{money(total / len(s))} por mes.",
-        f"**Composición:** gasto bruto {money(gasto)} ({pct_txt(gasto / total * 100)}) vs. "
-        f"menor gasto / ingreso {money(menor)} → **neto {money(neto)}** "
-        + ("(posición favorable: los ingresos financieros superan el gasto)." if neto < 0
-           else "(gasto neto)."),
+        f"**Neto contable:** {money(neto)}",
         f"**Rubro líder:** {rub.index[0]} con {money(rub.iloc[0])} "
         f"({pct_txt(rub.iloc[0] / total * 100)}).",
     ]
@@ -1455,11 +1408,8 @@ def h_total(ctx: Ctx, c: Consulta) -> Respuesta:
         return _vacio(a)
     df = a.df
     total = df["Importe"].sum()
-    gasto = df.loc[df["Naturaleza"] == NAT_GASTO, "Importe"].sum()
-    menor = df.loc[df["Naturaleza"] == NAT_MENOR, "Importe"].sum()
     txt = (f"💰 El importe acumulado de **{_nombre_segmento(ctx, c)}** es **{money(total)}** "
-           f"({_num(len(df), 0)} registros).\n\n- Gasto bruto: {money(gasto)}\n"
-           f"- Menor gasto / ingreso: {money(menor)}\n- Neto contable: "
+           f"({_num(len(df), 0)} registros).\n\n- Neto contable: "
            f"**{money(df['Importe_Neto'].sum())}**")
     if not a.sin_valores.empty and len(a.sin_valores) != len(df):
         txt += (f"\n\nRepresenta el **{pct_txt(total / a.sin_valores['Importe'].sum() * 100)}** "
@@ -1774,18 +1724,11 @@ def h_neto(ctx: Ctx, c: Consulta) -> Respuesta:
     if a.df.empty:
         return _vacio(a)
     df = a.df
-    gasto = df.loc[df["Naturaleza"] == NAT_GASTO, "Importe"].sum()
-    menor = df.loc[df["Naturaleza"] == NAT_MENOR, "Importe"].sum()
     neto = df["Importe_Neto"].sum()
-    top_menor = (df[df["Naturaleza"] == NAT_MENOR].groupby("Rubro")["Importe"].sum()
-                 .sort_values(ascending=False))
     txt = (f"🧾 **Neto contable de {_nombre_segmento(ctx, c)}: {money(neto)}**\n\n"
-           f"- Gasto bruto: {money(gasto)}\n- Menor gasto / ingreso: {money(menor)}\n\n"
+           f"\n"
            + ("Los ingresos financieros y descuentos **superan** el gasto: la posición neta es "
               "favorable." if neto < 0 else "El gasto bruto supera a los ingresos y descuentos."))
-    if not top_menor.empty:
-        txt += (f"\n\nPrincipal fuente de menor gasto / ingreso: **{top_menor.index[0]}** "
-                f"({money(top_menor.iloc[0])}).")
     return Respuesta(txt, pie=_pie(a))
 
 
@@ -1798,547 +1741,4 @@ def h_calidad(ctx: Ctx, c: Consulta) -> Respuesta:
     por_rubro = (df.assign(sd=sd).groupby("Rubro")
                  .agg(Registros=("sd", "size"), Sin_desc=("sd", "sum")))
     por_rubro["% sin descripción"] = por_rubro["Sin_desc"] / por_rubro["Registros"] * 100
-    por_rubro = por_rubro.sort_values("% sin descripción", ascending=False).reset_index()
-    sin_ent = (df["Entidad"] == "Sin entidad").mean() * 100
-    txt = (f"🧪 **Calidad de datos**\n\n- Registros sin descripción: "
-           f"**{_num(sd.sum(), 0)}** ({pct_txt(sd.mean() * 100)}), equivalentes a "
-           f"{money(df.loc[sd, 'Importe'].sum())}.\n- Registros sin entidad: {pct_txt(sin_ent)}.\n"
-           f"- Cobertura: {_rango_texto(df)}.\n- Rubro más incompleto: "
-           f"**{por_rubro.iloc[0]['Rubro']}** ({pct_txt(por_rubro.iloc[0]['% sin descripción'])}).")
-    t = _fmt_tabla(por_rubro[["Rubro", "Registros", "% sin descripción"]],
-                   porcentaje=("% sin descripción",))
-    return Respuesta(txt, tabla=t, pie=_pie(a))
-
-
-def h_filtros(ctx: Ctx, c: Consulta) -> Respuesta:
-    f = ctx.f
-    nat = f.naturaleza or "Todo (valor absoluto)"
-    partes = [f"- **Años:** {f.anios[0]}–{f.anios[1]}",
-              "- **Meses:** " + ", ".join(MESES_LARGO[m] for m in f.meses),
-              "- **Origen de cuenta:** " + ", ".join(f.tipos), f"- **Naturaleza:** {nat}"]
-    if f.focos:
-        partes.append("- **Rubro seleccionado (filtro cruzado):** " + ", ".join(f.focos))
-    if f.focos_ent:
-        partes.append("- **Entidad seleccionada (filtro cruzado):** " + ", ".join(f.focos_ent))
-    return Respuesta("🎛️ **Filtros activos del tablero**\n\n" + "\n".join(partes))
-
-
-def h_cobertura(ctx: Ctx, c: Consulta) -> Respuesta:
-    df = ctx.df
-    return Respuesta(f"🗂️ El archivo cubre **{_rango_texto(df)}**: "
-                     f"{_num(len(df), 0)} registros, {df['Rubro'].nunique()} rubros y "
-                     f"{df['Entidad'].nunique()} entidades.")
-
-
-def h_glosario(ctx: Ctx, c: Consulta) -> Respuesta:
-    hallados = [(t, d) for rx, t, d in GLOSARIO if re.search(rf"\b({rx})\b", c.norm)]
-    if hallados:
-        return Respuesta("\n\n".join(f"📖 **{t}**\n\n{d}" for t, d in hallados[:3]))
-    return Respuesta("📖 Puedo explicar: " + ", ".join(t for _, t, _ in GLOSARIO)
-                     + ". Pregunte, por ejemplo, *¿qué es el gravamen?*")
-
-
-def h_uso(ctx: Ctx, c: Consulta) -> Respuesta:
-    guia = [
-        (r"cruzad\w*|seleccion\w*|clic|click",
-         "**Filtro cruzado:** haga clic en una barra de *Rubro* o de *Entidad*; todo el "
-         "tablero se recalcula. Use *Quitar filtro* para limpiar."),
-        (r"restablec\w*|quito|borro|limpi\w*",
-         "**Quitar filtros:** botón *Quitar filtro cruzado* en la franja de segmento activo."),
-        (r"compar\w*", "**Comparar:** en *Modo de análisis* elija *Comparativa de cuentas* o "
-                       "*de entidades* (hasta 2)."),
-        (r"descarg\w*|export\w*|csv",
-         "**Exportar:** pestaña *Detalle y variación* → *Descargar matriz (CSV)*."),
-        (r"carg\w*|archivo|excel", "**Cargar datos:** panel lateral → *Origen de datos*."),
-        (r"sesion|tiempo|basico|premium",
-         "**Sesión:** el perfil Básico dura 60 s; Premium es ilimitado."),
-    ]
-    sel = [t for rx, t in guia if re.search(rx, c.norm)]
-    return Respuesta("🧭 " + "\n\n".join(sel or [t for _, t in guia]))
-
-
-def h_perfil(ctx: Ctx, c: Consulta) -> Respuesta:
-    """Menciona un segmento sin pedir nada concreto: perfil rápido."""
-    a = construir_alcance(ctx, c)
-    if a.df.empty:
-        return _vacio(a)
-    df = a.df
-    s = serie_mensual(df)
-    tot_ref = a.sin_valores["Importe"].sum()
-    top = (df.groupby("Concepto")["Importe"].sum().drop(SIN_DESCRIPCION, errors="ignore")
-           .sort_values(ascending=False).head(3))
-    txt = (f"🔎 **{_nombre_segmento(ctx, c)}** acumula **{money(df['Importe'].sum())}** "
-           f"({pct_txt(df['Importe'].sum() / tot_ref * 100)} del periodo) en "
-           f"{_num(len(df), 0)} registros.\n\n- Mes pico: {etiqueta_periodo(s.idxmax())} "
-           f"({money(s.max())}).\n- Media mensual: {money(s.mean())}.")
-    if not top.empty:
-        txt += "\n- Principales conceptos: " + "; ".join(
-            f"{k} ({money(v)})" for k, v in top.items()) + "."
-    notas = _notas(ctx, c, a)
-    if notas:
-        txt += "\n\n" + "\n\n".join(notas)
-    return Respuesta(txt + "\n\n*¿Quiere el detalle, la tendencia o una comparación?*",
-                     figura=fig_evolucion(s, analizar_tendencia(s)) if len(s) > 1 else None,
-                     pie=_pie(a))
-
-
-HANDLERS = {
-    "saludo": h_saludo, "gracias": h_gracias, "ayuda": h_ayuda, "resumen": h_resumen,
-    "total": h_total, "promedio": h_promedio, "conteo": h_conteo, "ranking": h_ranking,
-    "participacion": h_participacion, "concentracion": h_concentracion,
-    "comparacion": h_comparacion, "variacion": h_variacion, "tendencia": h_tendencia,
-    "pico": h_pico, "detalle": h_detalle, "estacionalidad": h_estacionalidad,
-    "neto": h_neto, "calidad": h_calidad, "filtros": h_filtros, "cobertura": h_cobertura,
-    "glosario": h_glosario, "uso": h_uso,
-}
-
-
-# ------------------------------------------------------------------ LLM opcional
-def obtener_api_key() -> str | None:
-    clave = os.environ.get("ANTHROPIC_API_KEY")
-    if clave:
-        return clave
-    try:
-        return st.secrets.get("ANTHROPIC_API_KEY")
-    except Exception:   # noqa: BLE001 - sin secrets.toml
-        return None
-
-
-def contexto_para_llm(ctx: Ctx) -> str:
-    """Resumen agregado (sin registros individuales ni terceros)."""
-    df = filtrar(ctx.df, ctx.f)
-    if df.empty:
-        return "Sin datos."
-    s = serie_mensual(df)
-    t = analizar_tendencia(s)
-    por = lambda col, n=8: df.groupby(col)["Importe"].sum().sort_values(  # noqa: E731
-        ascending=False).head(n)
-    return "\n".join([
-        f"Periodo: {_rango_texto(df)}; registros: {len(df)}.",
-        f"Importe absoluto: {df['Importe'].sum():.0f}; neto contable: "
-        f"{df['Importe_Neto'].sum():.0f} (negativo = ingresos > gastos).",
-        "Por mes: " + "; ".join(f"{p}={v:.0f}" for p, v in s.items()),
-        "Por rubro: " + "; ".join(f"{k}={v:.0f}" for k, v in por("Rubro").items()),
-        "Por origen: " + "; ".join(f"{k}={v:.0f}" for k, v in por("Tipo").items()),
-        "Top entidades: " + "; ".join(f"{k}={v:.0f}" for k, v in por("Entidad").items()),
-        f"Tendencia: {t['estado']} ({t['pct']:.2f}% mensual, R2 {t['r2']:.2f}).",
-        "Nota: Gravamen=GMF 4x1000; Rendimientos y Dcto pronto pago son menor gasto.",
-    ])
-
-
-def consultar_llm(pregunta: str, ctx: Ctx) -> str | None:
-    if not (ctx.usar_llm and ctx.api_key):
-        return None
-    historial = "\n".join(f"{r}: {t}" for r, t in ctx.historial[-6:])
-    cuerpo = {
-        "model": MODELO_LLM, "max_tokens": 700,
-        "system": ("Eres un analista financiero senior de tesorería. Responde en español, "
-                   "claro y breve, solo con base en el contexto de datos entregado; si el "
-                   "dato no está, dilo. Escapa el símbolo de pesos como \\$."),
-        "messages": [{"role": "user", "content":
-                      f"CONTEXTO:\n{contexto_para_llm(ctx)}\n\nCONVERSACIÓN:\n{historial}\n\n"
-                      f"PREGUNTA: {pregunta}"}],
-    }
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages", data=json.dumps(cuerpo).encode(),
-        headers={"x-api-key": ctx.api_key, "anthropic-version": "2023-06-01",
-                 "content-type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:   # noqa: S310
-            data = json.load(r)
-        txt = "".join(b.get("text", "") for b in data.get("content", [])
-                      if b.get("type") == "text").strip()
-        return txt or None
-    except Exception:   # noqa: BLE001 - la IA generativa es opcional
-        return None
-
-
-def sugerencias(ctx: Ctx) -> list:
-    df = filtrar(ctx.df, ctx.f)
-    top_r = (df.groupby("Rubro")["Importe"].sum().idxmax() if not df.empty else "Gravamen")
-    return ["Resumen ejecutivo", f"¿Por qué {top_r}? Detalle de conceptos",
-            "¿Cuál es la entidad con mayor gasto?", "¿Qué meses tuvieron picos atípicos?",
-            "Proyección del próximo mes", "¿Hay concentración en pocas entidades?"]
-
-
-def fallback(ctx: Ctx, c: Consulta) -> Respuesta:
-    df = filtrar(ctx.df, ctx.f)
-    top = (df.groupby("Rubro")["Importe"].sum().idxmax() if not df.empty else "Gravamen")
-    return Respuesta(
-        "🤖 No logré identificar con claridad su consulta, pero puedo ayudarle con "
-        "totales, rankings, comparaciones, variaciones, tendencia y auditoría de conceptos."
-        f"\n\nEl rubro de mayor gasto ahora es **{top}**. Pruebe con:\n\n"
-        f"1. *¿Por qué {top}? Detalle de conceptos*\n2. *¿Cuál es el mayor banco?*\n"
-        "3. *Resumen ejecutivo*\n\nEscriba **ayuda** para ver todo lo que sé hacer.")
-
-
-def responder(texto: str, ctx: Ctx, previo: dict) -> tuple:
-    """Orquesta: comprensión -> handler -> (LLM / sugerencias) -> estado."""
-    c = analizar_pregunta(texto, ctx, previo)
-    if ctx.df.empty:
-        return Respuesta("⚠️ No hay datos cargados."), previo
-    if c.intent in HANDLERS:
-        resp = HANDLERS[c.intent](ctx, c)
-    elif c.valores or c.periodos or c.rel or c.ultimos_n:
-        resp = h_perfil(ctx, c) if c.valores else h_resumen(ctx, c)
-    else:
-        llm = consultar_llm(texto, ctx)
-        if llm:
-            resp = Respuesta(llm, pie="Respuesta generada con IA a partir de un resumen "
-                                      "agregado de los datos filtrados.")
-        else:
-            resp = fallback(ctx, c)
-    nuevo = dict(intent=c.intent, dim=c.dim, valores=c.valores, periodos=c.periodos) \
-        if c.intent in HANDLERS else previo
-    return resp, nuevo
-
-
-# =============================================================================
-# 9. PÁGINAS DEL TABLERO
-# =============================================================================
-MODO_INDIVIDUAL = "Individual / Cruzado (interactivo)"
-MODO_CUENTAS = "Comparativa de cuentas"
-MODO_ENTIDADES = "Comparativa de entidades"
-
-
-def leer_seleccion(clave: str) -> tuple:
-    """Lee los puntos seleccionados de un gráfico Plotly (evento nativo)."""
-    estado = st.session_state.get(clave)
-    if not estado:
-        return ()
-    try:
-        puntos = estado.get("selection", {}).get("points", [])
-    except AttributeError:
-        return ()
-    return tuple(dict.fromkeys(p["y"] for p in puntos if "y" in p))
-
-
-def _reset_foco() -> None:
-    st.session_state.ver_grafico += 1
-
-
-def render_foco(f: Filtros, modo: str, interactivo: bool) -> None:
-    izq, der = st.columns([5, 1.3])
-    partes = [f'<span class="chip">Rubro · {esc(x)}</span>' for x in f.focos]
-    partes += [f'<span class="chip">Entidad · {esc(x)}</span>' for x in f.focos_ent]
-    if partes:
-        titulo = "Comparativa activa" if not interactivo else "Filtro cruzado activo"
-        izq.markdown(f'<div class="foco"><b>🎯 {titulo}:</b> {"".join(partes)}</div>',
-                     unsafe_allow_html=True)
-    else:
-        izq.markdown('<div class="foco"><b>🌐 Segmento analizado:</b> Consolidado global '
-                     '— haga clic en una barra para filtrar todo el tablero.</div>',
-                     unsafe_allow_html=True)
-    if interactivo and partes:
-        der.button("✖ Quitar filtro cruzado", key="reset_foco", on_click=_reset_foco,
-                   **_ancho(st.button))
-
-
-def render_kpis(dyn: pd.DataFrame, serie: pd.Series, tend: dict) -> None:
-    total = float(dyn["Importe"].sum())
-    prom = total / len(serie) if len(serie) else 0.0
-    gasto = float(dyn.loc[dyn["Naturaleza"] == NAT_GASTO, "Importe"].sum())
-    menor = float(dyn.loc[dyn["Naturaleza"] == NAT_MENOR, "Importe"].sum())
-    neto = float(dyn["Importe_Neto"].sum())
-    var = variacion_ultimo_mes(serie)
-    sub1 = f"Media mensual: <b>{money_html(prom)}</b>"
-    if var:
-        sub1 += "<br>" + delta_html(var[2], f"{etiqueta_periodo(var[0])} vs. "
-                                            f"{etiqueta_periodo(var[1])}")
-    p_g = gasto / total * 100 if total else 0
-    color_neto = BAJA if neto < 0 else SUBE
-    lectura = "Posición favorable" if neto < 0 else "Gasto neto"
-    cols = st.columns(5)
-    tarjetas = [
-        kpi_card("Importe acumulado", money_html(total), sub1, BLUE),
-        kpi_card("Gasto bruto", money_html(gasto),
-                 f"{pct_txt(p_g)} del importe<br>{_num(int((dyn['Naturaleza'] == NAT_GASTO).sum()), 0)} registros",
-                 SLATE),
-        kpi_card("Menor gasto / ingreso", money_html(menor),
-                 f"{pct_txt(100 - p_g if total else 0)} del importe<br>Descuentos y rendimientos",
-                 "#85929E"),
-        kpi_card("Neto contable",
-                 f'<span style="color:{color_neto}">{money_html(neto)}</span>',
-                 f"Gasto − menor gasto/ingreso<br><b>{lectura}</b>", color_neto),
-        kpi_card("Vector de tendencia", tend["estado"],
-                 (f"{pct_txt(tend['pct'], True)} por mes · R² {_num(tend['r2'], 2)}<br>"
-                  f"Umbral ±1,5 % del promedio") if len(serie) >= 3 else "Requiere ≥ 3 meses",
-                 tend["color"]),
-    ]
-    for col, html_card in zip(cols, tarjetas):
-        col.markdown(html_card, unsafe_allow_html=True)
-    st.markdown('<div class="nota">ℹ️ Las barras y líneas usan <b>valores absolutos</b> '
-                'para no distorsionar la escala; el <b>Neto contable</b> conserva el signo '
-                'del libro mayor.</div>', unsafe_allow_html=True)
-
-
-def _grafico(fig: go.Figure, clave: str, interactivo: bool = False) -> None:
-    kwargs = dict(key=clave, config=PLOT_CFG, **_ancho(st.plotly_chart))
-    if interactivo:
-        kwargs.update(on_select="rerun", selection_mode="points")
-    st.plotly_chart(fig, **kwargs)
-
-
-def render_panorama(df: pd.DataFrame, f: Filtros, dyn: pd.DataFrame, serie: pd.Series,
-                    tend: dict, modo: str, items: tuple, sel_r: tuple, sel_e: tuple) -> None:
-    interactivo = modo == MODO_INDIVIDUAL
-    ver = st.session_state.ver_grafico
-    with st.container(border=True):
-        panel("Evolución cronológica del importe", "Línea de tendencia lineal punteada")
-        if not interactivo and items:
-            columna = "Rubro" if modo == MODO_CUENTAS else "Entidad"
-            _grafico(fig_evolucion_comparada(dyn, columna), "g_evol_comp")
-        else:
-            _grafico(fig_evolucion(serie, tend), "g_evol")
-
-    izq, der = st.columns(2)
-    data_r = dyn if not interactivo else filtrar(df, f, rubro=False)
-    data_e = dyn if not interactivo else filtrar(df, f, entidad=False)
-    with izq, st.container(border=True):
-        panel("Distribución por rubro contable",
-              "👆 clic para filtrar" if interactivo else "bloqueado en comparativa")
-        _grafico(fig_barras(data_r.groupby("Rubro")["Importe"].sum(), sel_r),
-                 f"g_rubro_{ver}" if interactivo else "g_rubro_fijo", interactivo)
-    with der, st.container(border=True):
-        panel("Concentración por entidad / tercero",
-              "👆 clic para filtrar (top 15)" if interactivo else "top 15")
-        ent = (data_e[data_e["Entidad"] != "Sin entidad"].groupby("Entidad")["Importe"].sum())
-        top = ent.nlargest(15)
-        extra = ent[ent.index.isin(sel_e) & ~ent.index.isin(top.index)]
-        _grafico(fig_barras(pd.concat([top, extra]), sel_e, alto=380),
-                 f"g_ent_{ver}" if interactivo else "g_ent_fijo", interactivo)
-
-    izq2, der2 = st.columns(2)
-    with izq2, st.container(border=True):
-        panel("Gasto bruto vs. menor gasto / ingreso", "Por mes")
-        _grafico(fig_naturaleza(dyn), "g_nat")
-    with der2, st.container(border=True):
-        panel("Estacionalidad: comparativo por año", "Mismo mes, distintos ejercicios")
-        _grafico(fig_estacional(dyn), "g_estacional")
-
-
-def _color_var(valor: float) -> str:
-    if pd.isna(valor):
-        return ""
-    if valor > 0:
-        return f"color: {SUBE}; font-weight: 700;"
-    if valor < 0:
-        return f"color: {BAJA}; font-weight: 700;"
-    return ""
-
-
-def render_detalle(dyn: pd.DataFrame) -> None:
-    izq, der = st.columns([1.25, 1])
-    with izq, st.container(border=True):
-        panel("Matriz de variación (MoM / YoY)", "Rojo: el gasto sube · Verde: el gasto baja")
-        matriz = matriz_variacion(dyn)
-        if len(matriz) > 1:
-            estilo = (matriz.style
-                      .format({"Importe": cop, "Δ vs mes anterior": cop,
-                               "Var. MoM %": lambda v: pct_txt(v, True),
-                               "Var. YoY %": lambda v: pct_txt(v, True)}, na_rep="—")
-                      .map(_color_var, subset=["Δ vs mes anterior", "Var. MoM %", "Var. YoY %"]))
-            st.dataframe(estilo, hide_index=True, height=470, **_ancho(st.dataframe))
-            st.download_button("⬇️ Descargar matriz (CSV)",
-                               matriz.to_csv(index=False).encode("utf-8-sig"),
-                               "matriz_variacion.csv", "text/csv", key="dl_matriz",
-                               **_ancho(st.download_button))
-        else:
-            st.info("💡 Se requieren al menos dos periodos para calcular variaciones.")
-    with der:
-        with st.container(border=True):
-            panel("Resumen por rubro")
-            r = resumen_rubros(dyn)
-            st.dataframe(
-                _fmt_tabla(r, dinero=("Importe", "Gasto bruto", "Menor gasto / Ingreso", "Neto"),
-                           porcentaje=("% del total",)),
-                hide_index=True, **_ancho(st.dataframe))
-        with st.container(border=True):
-            panel("Principales conceptos (descripción contable)")
-            g = (dyn[dyn["Concepto"] != SIN_DESCRIPCION].groupby("Concepto")["Importe"]
-                 .agg(["sum", "count"]).sort_values("sum", ascending=False).head(10))
-            t = pd.DataFrame({"Concepto": g.index, "Importe": g["sum"].to_numpy(),
-                              "Registros": g["count"].to_numpy()})
-            sd = dyn.loc[dyn["Concepto"] == SIN_DESCRIPCION, "Importe"].sum()
-            st.dataframe(_fmt_tabla(t, dinero=("Importe",)), hide_index=True,
-                         **_ancho(st.dataframe))
-            if sd:
-                st.caption(f"Sin descripción: {fmt(sd)} "
-                           f"({pct_txt(sd / dyn['Importe'].sum() * 100)} del importe).")
-
-
-def _encolar(pregunta: str) -> None:
-    st.session_state.pregunta_pendiente = pregunta
-
-
-def _limpiar_chat() -> None:
-    st.session_state.historial = []
-    st.session_state.estado_chat = {}
-
-
-def _palabras(texto: str):
-    for palabra in re.split(r"(\s+)", texto):
-        yield palabra
-        time.sleep(0.008)
-
-
-def _pintar_mensaje(msg: dict, animar: bool = False) -> None:
-    avatar = "🧑‍💼" if msg["rol"] == "user" else "🤖"
-    with st.chat_message(msg["rol"], avatar=avatar):
-        if msg["rol"] == "user":
-            st.markdown(msg["texto"].replace("$", "\\$"))
-            return
-        resp: Respuesta = msg["resp"]
-        if animar:
-            st.write_stream(_palabras(resp.texto))
-        else:
-            st.markdown(resp.texto)
-        if resp.tabla is not None and not resp.tabla.empty:
-            st.dataframe(resp.tabla, hide_index=True, **_ancho(st.dataframe))
-        if resp.figura is not None:
-            st.plotly_chart(resp.figura, key=f"chat_fig_{msg['id']}", config=PLOT_CFG,
-                            **_ancho(st.plotly_chart))
-        if resp.pie:
-            st.caption(resp.pie)
-
-
-def render_asistente(df: pd.DataFrame, f: Filtros) -> None:
-    api_key = obtener_api_key()
-    premium = st.session_state.tipo_usuario == "Premium"
-    with st.container(border=True):
-        panel("Asistente analítico inteligente",
-              "Entiende lenguaje natural · errores de digitación · preguntas encadenadas")
-        c1, c2 = st.columns([3, 2])
-        c1.caption("Responde sobre los filtros activos. Si menciona un mes o año, consulta "
-                   "todo el histórico. Pruebe: *¿y en marzo?* después de una cifra.")
-        usar_llm = False
-        if api_key and premium:
-            usar_llm = c2.toggle("IA generativa para preguntas abiertas", key="usar_llm",
-                                 help="Envía solo un resumen agregado (sin registros ni "
-                                      "terceros) al modelo de lenguaje.")
-        ctx = Ctx(df=df, f=f, api_key=api_key, usar_llm=usar_llm,
-                  historial=[(m["rol"], m["texto"] if m["rol"] == "user" else m["resp"].texto)
-                             for m in st.session_state.historial])
-        chips = sugerencias(ctx)
-        for fila in (chips[:3], chips[3:]):
-            for col, texto in zip(st.columns(3), fila):
-                col.button(texto, key=f"chip_{texto}", on_click=_encolar, args=(texto,),
-                           **_ancho(st.button))
-        if not st.session_state.historial:
-            st.markdown("")
-            st.info("💬 Escriba **ayuda** para ver todo lo que puedo responder, o elija una "
-                    "sugerencia.")
-        for msg in st.session_state.historial:
-            _pintar_mensaje(msg)
-        entrada = st.chat_input("Escriba su consulta analítica…")
-        entrada = entrada or st.session_state.pop("pregunta_pendiente", None)
-        if entrada:
-            st.session_state.contador_chat += 2
-            nuevo_u = dict(rol="user", texto=entrada, id=st.session_state.contador_chat - 1)
-            _pintar_mensaje(nuevo_u)
-            with st.spinner("Analizando datos…"):
-                resp, estado = responder(entrada, ctx, st.session_state.estado_chat)
-            nuevo_a = dict(rol="assistant", resp=resp, id=st.session_state.contador_chat)
-            _pintar_mensaje(nuevo_a, animar=True)
-            st.session_state.estado_chat = estado
-            st.session_state.historial += [nuevo_u, nuevo_a]
-        if st.session_state.historial:
-            st.button("🧹 Nueva conversación", key="limpiar_chat", on_click=_limpiar_chat)
-
-
-# =============================================================================
-# 10. APLICACIÓN
-# =============================================================================
-def main() -> None:
-    st.set_page_config(page_title=APP_TITULO, page_icon="📊", layout="wide",
-                       initial_sidebar_state="expanded")
-    inyectar_css()
-    init_estado()
-    if not st.session_state.autenticado:
-        pantalla_login()
-        st.stop()
-    verificar_expiracion()
-    sidebar_sesion()
-
-    panel("Origen de datos", mini=True, destino=st.sidebar)
-    archivo = st.sidebar.file_uploader("Libro contable (Excel)", type=["xlsx", "xls"],
-                                       label_visibility="collapsed")
-    if archivo is None:
-        pantalla_bienvenida()
-        st.stop()
-    contenido = archivo.getvalue()
-    try:
-        with st.spinner("Construyendo modelo de datos…"):
-            df = cargar_datos(hashlib.md5(contenido).hexdigest(), contenido)
-    except Exception as exc:   # noqa: BLE001
-        st.error(f"No fue posible procesar el archivo: {exc}")
-        st.stop()
-    if df.empty:
-        st.warning("El archivo no contiene registros válidos.")
-        st.stop()
-
-    base = sidebar_filtros(df)
-    if not base.meses or not base.tipos:
-        st.warning("Seleccione al menos un mes y un origen de cuenta en el panel lateral.")
-        st.stop()
-    disponible = filtrar(df, base)
-    if disponible.empty:
-        st.warning("No hay registros con los filtros actuales.")
-        st.stop()
-
-    hero(APP_TITULO, f"Gastos financieros · {_rango_texto(disponible)} · "
-                     f"{_num(len(disponible), 0)} registros",
-         [f"Perfil {st.session_state.tipo_usuario}",
-          next(k for k, v in OPCIONES_NAT.items() if v == base.naturaleza)])
-
-    with st.container(border=True):
-        panel("Modo de análisis", "Individual con filtro cruzado o comparativa de dos elementos")
-        c1, c2 = st.columns([1, 2.4])
-        modo = c1.selectbox("Modo", [MODO_INDIVIDUAL, MODO_CUENTAS, MODO_ENTIDADES],
-                            label_visibility="collapsed")
-        items: tuple = ()
-        if modo == MODO_CUENTAS:
-            items = tuple(c2.multiselect("Cuentas", sorted(disponible["Rubro"].unique()),
-                                         max_selections=2, label_visibility="collapsed",
-                                         placeholder="Seleccione hasta 2 cuentas"))
-        elif modo == MODO_ENTIDADES:
-            items = tuple(c2.multiselect("Entidades", sorted(disponible["Entidad"].unique()),
-                                         max_selections=2, label_visibility="collapsed",
-                                         placeholder="Seleccione hasta 2 entidades"))
-
-    interactivo = modo == MODO_INDIVIDUAL
-    ver = st.session_state.ver_grafico
-    sel_r = sel_e = ()
-    if interactivo:
-        sel_r = tuple(x for x in leer_seleccion(f"g_rubro_{ver}")
-                      if x in set(disponible["Rubro"]))
-        sel_e = tuple(x for x in leer_seleccion(f"g_ent_{ver}")
-                      if x in set(disponible["Entidad"]))
-        f = replace(base, focos=sel_r, focos_ent=sel_e)
-    elif modo == MODO_CUENTAS:
-        f = replace(base, focos=items)
-    else:
-        f = replace(base, focos_ent=items)
-
-    render_foco(f, modo, interactivo)
-    dyn = filtrar(df, f)
-    if dyn.empty:
-        st.warning("La combinación seleccionada no tiene registros.")
-        st.button("Restablecer filtro cruzado", on_click=_reset_foco, key="reset_vacio")
-        st.stop()
-
-    serie = serie_mensual(dyn)
-    tend = analizar_tendencia(serie)
-    render_kpis(dyn, serie, tend)
-
-    t1, t2, t3 = st.tabs(["📊 Panorama", "🧮 Detalle y variación", "🤖 Asistente IA"])
-    with t1:
-        render_panorama(df, f, dyn, serie, tend, modo, items, sel_r, sel_e)
-    with t2:
-        render_detalle(dyn)
-    with t3:
-        render_asistente(df, f)
-
-
-if __name__ == "__main__":
-    main()
+    por_rubro = por_rubro.
