@@ -1,108 +1,173 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import time
+import plotly.graph_objects as go
 
+# ==========================================
+# CONFIGURACIÓN DE LA PÁGINA
+# ==========================================
 st.set_page_config(page_title="Dashboard Financiero", layout="wide")
 
-# --- SISTEMA DE LOGIN ---
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "user_type" not in st.session_state:
-    st.session_state.user_type = None
-if "login_time" not in st.session_state:
-    st.session_state.login_time = None
+# ==========================================
+# ESTILOS CSS PERSONALIZADOS (Para replicar la imagen)
+# ==========================================
+st.markdown("""
+    <style>
+    .titulo-panel {
+        background-color: black;
+        color: #FFD700; /* Dorado/Amarillo */
+        text-align: center;
+        font-weight: bold;
+        padding: 8px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        font-size: 18px;
+    }
+    .stSlider > div > div > div > div {
+        background-color: #333;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-def check_password():
-    pwd = st.session_state.password
-    if pwd == "basico123":
-        st.session_state.authenticated = True
-        st.session_state.user_type = "Básico"
-        st.session_state.login_time = time.time()
-    elif pwd == "premium123":
-        st.session_state.authenticated = True
-        st.session_state.user_type = "Premium"
-        st.session_state.login_time = time.time()
-    else:
-        st.error("Clave incorrecta")
+# ==========================================
+# CARGA DE DATOS
+# ==========================================
+st.sidebar.subheader("📂 Carga de Datos")
+archivo_subido = st.sidebar.file_uploader("Suba su archivo Excel limpio", type=["xlsx", "xls"])
 
-if not st.session_state.authenticated:
-    st.title("Acceso al Dashboard")
-    st.text_input("Clave de acceso", type="password", key="password")
-    st.button("Ingresar", on_click=check_password)
-    st.info("💡 Claves: Básico: `basico123` (1 min) | Premium: `premium123` (Ilimitado)")
-    st.stop()
-
-if st.session_state.user_type == "Básico":
-    elapsed = time.time() - st.session_state.login_time
-    if elapsed > 60:
-        st.session_state.authenticated = False
-        st.warning("Tiempo expirado.")
-        st.stop()
-    else:
-        st.sidebar.info(f"Básico - Expira en {int(60 - elapsed)}s")
-        st.sidebar.button("Actualizar")
-else:
-    st.sidebar.success("Usuario Premium")
-
-if st.sidebar.button("Cerrar Sesión"):
-    st.session_state.authenticated = False
-    st.rerun()
-
-# --- CARGAR DATOS ---
 @st.cache_data
-def load_data():
-    df = pd.read_excel('gastos_limpios.xlsx')
-    date_col = 'Fe-contab-' if 'Fe-contab-' in df.columns else 'Fe/contab/'
-    df['Fecha'] = pd.to_datetime(df[date_col], errors='coerce')
-    df['Año'] = df['Fecha'].dt.year
-    df['Mes'] = df['Fecha'].dt.month
+def load_data(file):
+    df = pd.read_excel(file)
+    df.columns = df.columns.str.strip()
+    
+    col_fecha = 'Fe-contab-' if 'Fe-contab-' in df.columns else 'Fe/contab/'
+    if col_fecha in df.columns:
+        df['Fecha'] = pd.to_datetime(df[col_fecha], errors='coerce')
+        df['Año'] = df['Fecha'].dt.year
+        df['Mes'] = df['Fecha'].dt.month
+        # Crear etiqueta mes-año para gráficos (ej: ene 2024)
+        meses_nom = {1:'ene', 2:'feb', 3:'mar', 4:'abr', 5:'may', 6:'jun', 7:'jul', 8:'ago', 9:'sep', 10:'oct', 11:'nov', 12:'dic'}
+        df['Mes_Nombre'] = df['Mes'].map(meses_nom)
+        df['Periodo_Label'] = df['Mes_Nombre'] + " " + df['Año'].astype(str)
+        df['Periodo_Sort'] = df['Año'].astype(str) + "-" + df['Mes'].astype(str).str.zfill(2)
+        
+    col_importe = 'Importe_Graficar' if 'Importe_Graficar' in df.columns else 'Importe en ML'
+    if col_importe in df.columns:
+        df['Importe'] = pd.to_numeric(df[col_importe], errors='coerce').abs()
+        
     return df
 
-df = load_data()
+if archivo_subido is None:
+    st.info("Por favor, cargue el archivo 'gastos_limpios.xlsx' en el panel izquierdo para visualizar el tablero.")
+    st.stop()
 
-# --- FILTROS ---
-st.sidebar.markdown("### Filtros")
-min_y, max_y = int(df['Año'].min()), int(df['Año'].max())
-anios = st.sidebar.slider("Año", min_y, max_y, (min_y, max_y))
+df = load_data(archivo_subido)
 
-meses_dict = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
-meses_sel = st.sidebar.multiselect("Meses", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], default=list(meses_dict.keys()))
+# Función para formatear números a "mil M" o "M"
+def format_currency(val):
+    if val >= 1_000_000_000:
+        return f"{val/1_000_000_000:.1f} mil M".replace('.', ',')
+    elif val >= 1_000_000:
+        return f"{val/1_000_000:.1f} M".replace('.', ',')
+    return str(val)
 
-st.sidebar.markdown("### Origen (Tipo)")
-tipos_sel = [t for t in df['Tipo'].dropna().unique() if st.sidebar.checkbox(str(t), value=True)]
+# ==========================================
+# PANEL IZQUIERDO (FILTROS)
+# ==========================================
+# 1. Cuadrícula de Meses
+st.sidebar.markdown('<div class="titulo-panel">Mes</div>', unsafe_allow_html=True)
+meses_dict = {1:'enero', 2:'febrero', 3:'marzo', 4:'abril', 5:'mayo', 6:'junio', 
+              7:'julio', 8:'agosto', 9:'septiembre', 10:'octubre', 11:'noviembre', 12:'diciembre'}
 
-df_filt = df[(df['Año'] >= anios[0]) & (df['Año'] <= anios[1]) & (df['Mes'].isin(meses_sel)) & (df['Tipo'].astype(str).isin(tipos_sel))]
+# Simular botones de meses
+meses_seleccionados = st.sidebar.multiselect("Seleccionar meses:", list(meses_dict.values()), default=list(meses_dict.values()))
+meses_ids = [k for k, v in meses_dict.items() if v in meses_seleccionados]
 
-# --- PANEL PRINCIPAL ---
-st.title("Dashboard de Gastos")
-cuentas_disp = df_filt['Nombre cuenta'].dropna().unique().tolist()
-cuenta_sel = st.multiselect("Filtrar Cuentas", cuentas_disp, default=cuentas_disp)
-df_filt = df_filt[df_filt['Nombre cuenta'].isin(cuenta_sel)]
+st.sidebar.markdown("---")
 
-col1, col2 = st.columns([2, 1])
+# 2. Slider de Año
+min_year, max_year = int(df['Año'].min()), int(df['Año'].max())
+anios = st.sidebar.slider("Año", min_year, max_year, (min_year, max_year))
 
+st.sidebar.markdown("---")
+
+# 3. Origen Cuenta (Tipo)
+st.sidebar.markdown("### Origen cuenta")
+st.sidebar.markdown("**Tipo**")
+tipos_disp = df['Tipo'].dropna().unique()
+tipos_sel = [t for t in tipos_disp if st.sidebar.checkbox(str(t), value=True)]
+
+# APLICAR FILTROS
+df_filt = df[
+    (df['Año'] >= anios[0]) & (df['Año'] <= anios[1]) & 
+    (df['Mes'].isin(meses_ids)) & 
+    (df['Tipo'].isin(tipos_sel))
+]
+
+# ==========================================
+# PANEL PRINCIPAL
+# ==========================================
+
+# --- GRÁFICO 1: TENDENCIA ---
+st.markdown('<div class="titulo-panel">Tendencia</div>', unsafe_allow_html=True)
+tendencia = df_filt.groupby(['Periodo_Sort', 'Periodo_Label'])['Importe'].sum().reset_index().sort_values('Periodo_Sort')
+tendencia['Texto_Hover'] = tendencia['Importe'].apply(format_currency)
+
+fig_line = go.Figure()
+fig_line.add_trace(go.Scatter(
+    x=tendencia['Periodo_Label'], 
+    y=tendencia['Importe'],
+    mode='lines+markers+text',
+    text=tendencia['Texto_Hover'],
+    textposition='top center',
+    line=dict(color='#0088FF', width=3), # Azul claro
+    marker=dict(color='#D9777F', size=8, line=dict(width=1, color='white')), # Puntos rosados
+    fill='tozeroy',
+    fillcolor='rgba(220, 220, 220, 0.4)' # Fondo gris claro bajo la línea
+))
+fig_line.update_layout(
+    plot_bgcolor='white',
+    margin=dict(l=20, r=20, t=20, b=20),
+    xaxis=dict(showgrid=True, gridcolor='#f0f0f0'),
+    yaxis=dict(showgrid=True, gridcolor='#f0f0f0', visible=False), # Ocultar eje Y como en la imagen
+    height=350
+)
+st.plotly_chart(fig_line, use_container_width=True)
+
+
+# FILA PARA LOS DOS GRÁFICOS DE BARRAS
+col1, col2 = st.columns(2)
+
+# --- GRÁFICO 2: TIPO DE CUENTA ---
 with col1:
-    st.markdown("#### Tendencia Consolidada")
-    tendencia = df_filt.groupby(['Año', 'Mes']).agg({'Importe_Graficar': 'sum'}).reset_index()
-    if not tendencia.empty:
-        tendencia['Periodo'] = tendencia['Año'].astype(str) + '-' + tendencia['Mes'].astype(str).str.zfill(2)
-        fig_line = px.line(tendencia.sort_values(['Año', 'Mes']), x='Periodo', y='Importe_Graficar', markers=True)
-        st.plotly_chart(fig_line, use_container_width=True)
-
-with col2:
-    st.markdown("#### Tipo de Cuenta")
-    cuenta_df = df_filt.groupby('Nombre cuenta').agg({'Importe_Graficar': 'sum'}).reset_index().sort_values('Importe_Graficar')
-    fig_bar1 = px.bar(cuenta_df, x='Importe_Graficar', y='Nombre cuenta', orientation='h')
+    st.markdown('<div class="titulo-panel">Tipo de cuenta</div>', unsafe_allow_html=True)
+    cuenta_df = df_filt.groupby('Nombre cuenta')['Importe'].sum().reset_index().sort_values('Importe', ascending=True)
+    cuenta_df['Texto_Hover'] = cuenta_df['Importe'].apply(format_currency)
+    
+    fig_bar1 = px.bar(cuenta_df, x='Importe', y='Nombre cuenta', text='Texto_Hover', orientation='h')
+    fig_bar1.update_traces(marker_color='#C98B8B', textposition='outside') # Color salmón
+    fig_bar1.update_layout(
+        plot_bgcolor='white',
+        xaxis=dict(visible=False), 
+        yaxis=dict(title=""),
+        margin=dict(l=10, r=40, t=10, b=10),
+        height=350
+    )
     st.plotly_chart(fig_bar1, use_container_width=True)
 
-st.markdown("#### Top 20 por Referencia")
-banco_df = df_filt.groupby('Clave referencia 3').agg({'Importe_Graficar': 'sum'}).reset_index().sort_values('Importe_Graficar').tail(20)
-fig_bar2 = px.bar(banco_df, x='Importe_Graficar', y='Clave referencia 3', orientation='h')
-st.plotly_chart(fig_bar2, use_container_width=True)
-
-# --- MATRIZ ---
-if not tendencia.empty:
-    st.markdown("#### Matriz de Variaciones")
-    tendencia['Var %'] = tendencia['Importe_Graficar'].pct_change() * 100
-    st.dataframe(tendencia[['Periodo', 'Importe_Graficar', 'Var %']].style.format({'Importe_Graficar': '${:,.2f}', 'Var %': '{:+.2f}%'}), use_container_width=True)
+# --- GRÁFICO 3: CANTIDAD POR BANCO ---
+with col2:
+    st.markdown('<div class="titulo-panel">Cantidad por banco</div>', unsafe_allow_html=True)
+    banco_df = df_filt.groupby('Clave referencia 3')['Importe'].sum().reset_index().sort_values('Importe', ascending=True).tail(15)
+    banco_df['Texto_Hover'] = banco_df['Importe'].apply(format_currency)
+    
+    fig_bar2 = px.bar(banco_df, x='Importe', y='Clave referencia 3', text='Texto_Hover', orientation='h')
+    fig_bar2.update_traces(marker_color='#C98B8B', textposition='outside') # Color salmón
+    fig_bar2.update_layout(
+        plot_bgcolor='white',
+        xaxis=dict(visible=False), 
+        yaxis=dict(title=""),
+        margin=dict(l=10, r=40, t=10, b=10),
+        height=350
+    )
+    st.plotly_chart(fig_bar2, use_container_width=True)
