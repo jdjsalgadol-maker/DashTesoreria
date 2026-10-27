@@ -10,19 +10,19 @@ import io
 import os
 
 # =============================================================================
-# 1. CONSTANTES Y PALETA CORPORATIVA
+# 1. CONSTANTES Y PALETA CORPORATIVA (NUEVA ESCALA AZUL/GRIS)
 # =============================================================================
 APP_TITULO = "Dashboard Analítico de Tesorería"
 LIMITE_BASICO_S = 60
 
-NAVY = "#0B1F33"
-NAVY_2 = "#14304A"
-MUTED = "#566678"
-BLUE = "#1F618D"
-SALMON = "#C98B8B"
-SALMON_SOFT = "#F2DADA"
-SUBE = "#B3261E"   # rojo
-BAJA = "#1B7A3A"   # verde
+# Nueva paleta ejecutiva
+CORP_BLUE = "#1F618D"       # Azul corporativo principal (Barras, chips, bordes)
+CORP_BLUE_SOFT = "#D4E6F1"  # Azul claro (Barras no seleccionadas)
+CORP_GRAY = "#34495E"       # Gris pizarra oscuro (Textos, controles)
+BG_LIGHT = "#F8F9F9"        # Fondo neutro
+
+SUBE = "#B3261E"   # Rojo (Solo para variaciones negativas/alertas)
+BAJA = "#1B7A3A"   # Verde (Solo para variaciones positivas/ahorros)
 
 MESES_LARGO = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo",
@@ -129,10 +129,10 @@ def cargar_datos(file) -> pd.DataFrame:
 # =============================================================================
 def analizar_tendencia(serie: pd.Series) -> dict:
     n = len(serie)
-    vacio = dict(estado="Datos insuficientes", color=MUTED)
+    vacio = dict(estado="Datos insuficientes", color=CORP_GRAY)
     if n == 0: return vacio
     media = float(serie.mean())
-    if n <= 2: return {"estado": "➡️ Estable", "color": NAVY_2}
+    if n <= 2: return {"estado": "➡️ Estable", "color": CORP_GRAY}
     
     y, x = serie.to_numpy(dtype=float), np.arange(n)
     pend, _ = np.polyfit(x, y, 1)
@@ -140,30 +140,30 @@ def analizar_tendencia(serie: pd.Series) -> dict:
     
     if pend > umbral: return {"estado": "📈 Alcista (Expansión)", "color": SUBE}
     elif pend < -umbral: return {"estado": "📉 Bajista (Contracción)", "color": BAJA}
-    else: return {"estado": "➡️ Estable (Controlado)", "color": NAVY_2}
+    else: return {"estado": "➡️ Estable (Controlado)", "color": CORP_GRAY}
 
 # =============================================================================
 # 5. CONFIGURACIÓN UI Y LOGIN
 # =============================================================================
 st.set_page_config(page_title=APP_TITULO, page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
-st.markdown('''
+st.markdown(f'''
     <style>
-    .titulo-panel {
+    .titulo-panel {{
         background: linear-gradient(90deg, #101820 0%, #1a2530 100%);
         color: #FEE715; text-align: left; font-weight: 600; padding: 12px 20px; 
         border-radius: 8px; margin-bottom: 20px; font-size: 18px;
         box-shadow: 0px 4px 10px rgba(0,0,0,0.15); letter-spacing: 0.5px;
-    }
-    .stSlider > div > div > div > div { background-color: #C98B8B !important; }
-    div[data-testid="stThumbValue"] { background-color: #2C3E50 !important; color: #FFFFFF !important; font-weight: bold; border-radius: 4px; }
-    span[data-baseweb="tag"] { background-color: #C98B8B !important; color: white !important; border-radius: 4px; }
-    div[data-testid="metric-container"] {
+    }}
+    .stSlider > div > div > div > div {{ background-color: {CORP_BLUE} !important; }}
+    div[data-testid="stThumbValue"] {{ background-color: {CORP_GRAY} !important; color: #FFFFFF !important; font-weight: bold; border-radius: 4px; }}
+    span[data-baseweb="tag"] {{ background-color: {CORP_BLUE} !important; color: white !important; border-radius: 4px; }}
+    div[data-testid="metric-container"] {{
         background-color: #ffffff; border: 1px solid #EAECEE; border-radius: 10px; 
         padding: 20px; box-shadow: 0px 4px 15px rgba(0,0,0,0.04);
-        border-left: 6px solid #C98B8B; transition: transform 0.2s ease-in-out;
-    }
-    div[data-testid="metric-container"]:hover { transform: translateY(-3px); box-shadow: 0px 6px 20px rgba(0,0,0,0.08); }
+        border-left: 6px solid {CORP_BLUE}; transition: transform 0.2s ease-in-out;
+    }}
+    div[data-testid="metric-container"]:hover {{ transform: translateY(-3px); box-shadow: 0px 6px 20px rgba(0,0,0,0.08); }}
     </style>
 ''', unsafe_allow_html=True)
 
@@ -267,8 +267,8 @@ if not tend.empty:
     fig_line.add_trace(go.Scatter(
         x=tend['Periodo_Label'], y=tend['Importe'], mode='lines+markers+text',
         text=tend['Importe'].apply(fmt), textposition='top center',
-        line=dict(color=BLUE, width=3.5), marker=dict(color=SALMON, size=10, line=dict(width=2, color='white')),
-        fill='tozeroy', fillcolor='rgba(31, 97, 141, 0.1)'
+        line=dict(color=CORP_GRAY, width=3.5), marker=dict(color=CORP_BLUE, size=10, line=dict(width=2, color='white')),
+        fill='tozeroy', fillcolor=f'rgba(31, 97, 141, 0.1)'
     ))
 fig_line.update_layout(
     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=20, r=20, t=20, b=20),
@@ -280,7 +280,7 @@ col_bar1, col_bar2 = st.columns(2)
 with col_bar1:
     st.markdown('<div class="titulo-panel">Distribución por Rubro Contable</div>', unsafe_allow_html=True)
     cuenta_df = df_filt.groupby('Rubro')['Importe'].sum().reset_index().sort_values('Importe')
-    colores = [SALMON if (not cuenta_sel or c == cuenta_sel) else SALMON_SOFT for c in cuenta_df['Rubro']]
+    colores = [CORP_BLUE if (not cuenta_sel or c == cuenta_sel) else CORP_BLUE_SOFT for c in cuenta_df['Rubro']]
     
     fig_bar1 = px.bar(cuenta_df, x='Importe', y='Rubro', text=cuenta_df['Importe'].apply(fmt), orientation='h')
     fig_bar1.update_traces(marker_color=colores, textposition='outside')
@@ -291,7 +291,7 @@ with col_bar2:
     st.markdown('<div class="titulo-panel">Concentración por Entidad / Tercero</div>', unsafe_allow_html=True)
     banco_df = df_dinamico.groupby('Entidad')['Importe'].sum().reset_index().sort_values('Importe').tail(15)
     fig_bar2 = px.bar(banco_df, x='Importe', y='Entidad', text=banco_df['Importe'].apply(fmt), orientation='h')
-    fig_bar2.update_traces(marker_color=SALMON, textposition='outside')
+    fig_bar2.update_traces(marker_color=CORP_BLUE, textposition='outside')
     fig_bar2.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(title=""), margin=dict(l=10, r=50, t=10, b=10), height=400)
     st.plotly_chart(fig_bar2, use_container_width=True)
 
