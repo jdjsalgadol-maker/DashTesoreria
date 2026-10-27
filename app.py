@@ -207,7 +207,7 @@ st.sidebar.markdown("---")
 # =============================================================================
 # 5. PANEL LATERAL (CARGA Y FILTROS)
 # =============================================================================
-st.sidebar.title("🎛️ Filtros de Análisis")
+st.sidebar.title("🎛️ Filtros Globales")
 archivo_subido = st.sidebar.file_uploader("📂 Origen de Datos (Excel)", type=["xlsx", "xls"])
 
 if not archivo_subido:
@@ -230,29 +230,75 @@ tipos_sel = [t for t in df['Tipo'].dropna().unique() if st.sidebar.checkbox(str(
 df_filt = df[(df['Año'] >= anios[0]) & (df['Año'] <= anios[1]) & (df['Mes'].isin(meses_ids)) & (df['Tipo'].isin(tipos_sel))]
 
 # =============================================================================
-# 6. FILTRADO CRUZADO BIDIRECCIONAL Y KPIs
+# 6. CUADRO COMPARATIVO, FILTRADO CRUZADO Y KPIs
 # =============================================================================
+st.markdown('<div class="titulo-panel">Resumen Ejecutivo y Cuadro Comparativo</div>', unsafe_allow_html=True)
+
+# --- Cuadro de Comparativa (Nuevo) ---
+col_comp1, col_comp2 = st.columns([1, 2.5])
+with col_comp1:
+    modo_comp = st.selectbox("Modo de Análisis:", ["Individual / Cruzado (Interactivo)", "Comparativa de Cuentas", "Comparativa de Entidades"])
+
+items_comp = []
+color_col = None
+
+with col_comp2:
+    if modo_comp == "Comparativa de Cuentas":
+        items_comp = st.multiselect("Seleccione hasta 2 Cuentas para comparar:", df_filt['Rubro'].dropna().unique(), max_selections=2)
+        color_col = 'Rubro'
+    elif modo_comp == "Comparativa de Entidades":
+        items_comp = st.multiselect("Seleccione hasta 2 Entidades para comparar:", df_filt['Entidad'].dropna().unique(), max_selections=2)
+        color_col = 'Entidad'
+
 cuenta_sel = None
-if "grafico_cuentas" in st.session_state:
-    puntos_c = st.session_state["grafico_cuentas"].get("selection", {}).get("points", [])
-    if puntos_c: cuenta_sel = puntos_c[0]["y"]
-
 entidad_sel = None
-if "grafico_entidades" in st.session_state:
-    puntos_e = st.session_state["grafico_entidades"].get("selection", {}).get("points", [])
-    if puntos_e: entidad_sel = puntos_e[0]["y"]
 
-# Dataframes para los gráficos (ignoran su propio filtro para permitir visualizar el resto del top y deseleccionar)
-df_para_cuentas = df_filt[df_filt['Entidad'] == entidad_sel] if entidad_sel else df_filt
-df_para_entidades = df_filt[df_filt['Rubro'] == cuenta_sel] if cuenta_sel else df_filt
+# Lógica de Datos Dinámicos
+if modo_comp != "Individual / Cruzado (Interactivo)" and items_comp:
+    # MODO COMPARATIVA ACTIVO
+    if modo_comp == "Comparativa de Cuentas":
+        df_dinamico = df_filt[df_filt['Rubro'].isin(items_comp)]
+    else:
+        df_dinamico = df_filt[df_filt['Entidad'].isin(items_comp)]
+    
+    txt_segmento = f"Comparativa: {' vs '.join(items_comp)}"
+    
+    # En modo comparativa, bloqueamos el cross-filtering para evitar conflictos
+    df_para_cuentas = df_dinamico
+    df_para_entidades = df_dinamico
+else:
+    # MODO INDIVIDUAL / CRUZADO (Comportamiento normal)
+    color_col = None
+    if "grafico_cuentas" in st.session_state:
+        puntos_c = st.session_state["grafico_cuentas"].get("selection", {}).get("points", [])
+        if puntos_c: cuenta_sel = puntos_c[0]["y"]
 
-# Dataframe dinámico total (Aplica todos los clics y filtros de la página)
-df_dinamico = df_filt.copy()
-if cuenta_sel: df_dinamico = df_dinamico[df_dinamico['Rubro'] == cuenta_sel]
-if entidad_sel: df_dinamico = df_dinamico[df_dinamico['Entidad'] == entidad_sel]
+    if "grafico_entidades" in st.session_state:
+        puntos_e = st.session_state["grafico_entidades"].get("selection", {}).get("points", [])
+        if puntos_e: entidad_sel = puntos_e[0]["y"]
 
+    df_para_cuentas = df_filt[df_filt['Entidad'] == entidad_sel] if entidad_sel else df_filt
+    df_para_entidades = df_filt[df_filt['Rubro'] == cuenta_sel] if cuenta_sel else df_filt
 
-st.markdown('<div class="titulo-panel">Resumen Ejecutivo de Métricas</div>', unsafe_allow_html=True)
+    df_dinamico = df_filt.copy()
+    if cuenta_sel: df_dinamico = df_dinamico[df_dinamico['Rubro'] == cuenta_sel]
+    if entidad_sel: df_dinamico = df_dinamico[df_dinamico['Entidad'] == entidad_sel]
+
+    filtros_activos = []
+    if cuenta_sel: filtros_activos.append(cuenta_sel)
+    if entidad_sel: filtros_activos.append(entidad_sel)
+    txt_segmento = " + ".join(filtros_activos) if filtros_activos else "Consolidado Global"
+
+    # Botón de Reset Inteligente (Solo aparece si hay clics)
+    if cuenta_sel or entidad_sel:
+        st.sidebar.markdown("---")
+        st.sidebar.warning("🎯 **Filtro Cruzado Activo**")
+        if st.sidebar.button("🔄 Restablecer Gráficos", use_container_width=True):
+            if "grafico_cuentas" in st.session_state: del st.session_state["grafico_cuentas"]
+            if "grafico_entidades" in st.session_state: del st.session_state["grafico_entidades"]
+            st.rerun()
+
+# Render de KPIs
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
 total_gastos = df_dinamico['Importe'].sum()
@@ -260,14 +306,9 @@ meses_unicos = df_dinamico['Periodo'].nunique()
 prom_mensual = total_gastos / meses_unicos if meses_unicos > 0 else 0
 tendencia_res = analizar_tendencia(df_dinamico.groupby('Periodo')['Importe'].sum().sort_index())
 
-filtros_activos = []
-if cuenta_sel: filtros_activos.append(cuenta_sel)
-if entidad_sel: filtros_activos.append(entidad_sel)
-txt_segmento = " + ".join(filtros_activos) if filtros_activos else "Consolidado Global"
-
 kpi1.metric("Importe Acumulado", format_currency(total_gastos))
 kpi2.metric("Media de Gasto Mensual", format_currency(prom_mensual))
-kpi3.metric("Vector de Tendencia", tendencia_res["estado"])
+kpi3.metric("Vector de Tendencia Global", tendencia_res["estado"])
 kpi4.metric("Segmento Analizado", txt_segmento)
 
 # =============================================================================
@@ -275,16 +316,34 @@ kpi4.metric("Segmento Analizado", txt_segmento)
 # =============================================================================
 st.markdown("---")
 st.markdown('<div class="titulo-panel">Evolución Cronológica del Gasto</div>', unsafe_allow_html=True)
-tend = df_dinamico.groupby(['Periodo', 'Periodo_Label'])['Importe'].sum().reset_index().sort_values('Periodo')
 
 fig_line = go.Figure()
-if not tend.empty:
-    fig_line.add_trace(go.Scatter(
-        x=tend['Periodo_Label'], y=tend['Importe'], mode='lines+markers+text',
-        text=tend['Importe'].apply(fmt), textposition='top center',
-        line=dict(color=CORP_GRAY, width=3.5), marker=dict(color=CORP_BLUE, size=10, line=dict(width=2, color='white')),
-        fill='tozeroy', fillcolor=f'rgba(31, 97, 141, 0.1)'
-    ))
+
+# Si está en modo comparativa y hay items seleccionados, dividimos la línea
+if color_col and len(items_comp) > 0:
+    tend = df_dinamico.groupby(['Periodo', 'Periodo_Label', color_col])['Importe'].sum().reset_index().sort_values('Periodo')
+    tend['Texto_Hover'] = tend['Importe'].apply(fmt)
+    
+    fig_line = px.line(
+        tend, x='Periodo_Label', y='Importe', color=color_col,
+        markers=True, text='Texto_Hover', 
+        color_discrete_sequence=[CORP_BLUE, CORP_GRAY] # Azul corporativo y Gris pizarra para contrastar
+    )
+    fig_line.update_traces(textposition='top center', line=dict(width=3.5), marker=dict(size=9, line=dict(width=1.5, color='white')))
+    fig_line.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=""))
+
+else:
+    # Modo línea única normal
+    tend = df_dinamico.groupby(['Periodo', 'Periodo_Label'])['Importe'].sum().reset_index().sort_values('Periodo')
+    if not tend.empty:
+        tend['Texto_Hover'] = tend['Importe'].apply(fmt)
+        fig_line.add_trace(go.Scatter(
+            x=tend['Periodo_Label'], y=tend['Importe'], mode='lines+markers+text',
+            text=tend['Texto_Hover'], textposition='top center',
+            line=dict(color=CORP_GRAY, width=3.5), marker=dict(color=CORP_BLUE, size=10, line=dict(width=2, color='white')),
+            fill='tozeroy', fillcolor=f'rgba(31, 97, 141, 0.1)'
+        ))
+
 fig_line.update_layout(
     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=20, r=20, t=20, b=20),
     height=350, xaxis=dict(showgrid=True, gridcolor='#EAECEE'), yaxis=dict(showgrid=False, visible=False)
@@ -294,7 +353,8 @@ st.plotly_chart(fig_line, use_container_width=True)
 col_bar1, col_bar2 = st.columns(2)
 with col_bar1:
     st.markdown('<div class="titulo-panel">Distribución por Rubro Contable</div>', unsafe_allow_html=True)
-    st.caption("👆 *Interactivo: Seleccione un rubro para filtrar.*")
+    if modo_comp == "Individual / Cruzado (Interactivo)":
+        st.caption("👆 *Interactivo: Seleccione un rubro para filtrar el tablero.*")
     
     cuenta_df = df_para_cuentas.groupby('Rubro')['Importe'].sum().reset_index().sort_values('Importe')
     cuenta_df['Texto_Hover'] = cuenta_df['Importe'].apply(fmt)
@@ -303,11 +363,16 @@ with col_bar1:
     fig_bar1 = px.bar(cuenta_df, x='Importe', y='Rubro', text='Texto_Hover', orientation='h')
     fig_bar1.update_traces(marker_color=colores_c, textposition='outside')
     fig_bar1.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(title=""), margin=dict(l=10, r=50, t=10, b=10), height=400, clickmode='event+select')
-    st.plotly_chart(fig_bar1, use_container_width=True, on_select="rerun", selection_mode="points", key="grafico_cuentas")
+    
+    if modo_comp == "Individual / Cruzado (Interactivo)":
+        st.plotly_chart(fig_bar1, use_container_width=True, on_select="rerun", selection_mode="points", key="grafico_cuentas")
+    else:
+        st.plotly_chart(fig_bar1, use_container_width=True) # Bloqueado en comparativa
 
 with col_bar2:
     st.markdown('<div class="titulo-panel">Concentración por Entidad / Tercero</div>', unsafe_allow_html=True)
-    st.caption("👆 *Interactivo: Seleccione un tercero para filtrar.*")
+    if modo_comp == "Individual / Cruzado (Interactivo)":
+        st.caption("👆 *Interactivo: Seleccione un tercero para filtrar el tablero.*")
     
     banco_df = df_para_entidades.groupby('Entidad')['Importe'].sum().reset_index().sort_values('Importe').tail(15)
     banco_df['Texto_Hover'] = banco_df['Importe'].apply(fmt)
@@ -316,7 +381,11 @@ with col_bar2:
     fig_bar2 = px.bar(banco_df, x='Importe', y='Entidad', text='Texto_Hover', orientation='h')
     fig_bar2.update_traces(marker_color=colores_e, textposition='outside')
     fig_bar2.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(title=""), margin=dict(l=10, r=50, t=10, b=10), height=400, clickmode='event+select')
-    st.plotly_chart(fig_bar2, use_container_width=True, on_select="rerun", selection_mode="points", key="grafico_entidades")
+    
+    if modo_comp == "Individual / Cruzado (Interactivo)":
+        st.plotly_chart(fig_bar2, use_container_width=True, on_select="rerun", selection_mode="points", key="grafico_entidades")
+    else:
+        st.plotly_chart(fig_bar2, use_container_width=True)
 
 # =============================================================================
 # 8. MATRIZ MoM Y ASISTENTE IA NLP
@@ -326,9 +395,13 @@ col_var, col_chat = st.columns([1.5, 1.2])
 
 with col_var:
     st.markdown('<div class="titulo-panel">Matriz de Variación Mensual (MoM)</div>', unsafe_allow_html=True)
-    if len(tend) > 1:
-        tend['Variación %'] = tend['Importe'].pct_change() * 100
-        df_mostrar = tend[['Periodo_Label', 'Importe', 'Variación %']].copy()
+    
+    # Recalculamos la tendencia total para la matriz para que siga siendo una línea unificada de totales
+    tend_total = df_dinamico.groupby(['Periodo', 'Periodo_Label'])['Importe'].sum().reset_index().sort_values('Periodo')
+    
+    if len(tend_total) > 1:
+        tend_total['Variación %'] = tend_total['Importe'].pct_change() * 100
+        df_mostrar = tend_total[['Periodo_Label', 'Importe', 'Variación %']].copy()
         df_mostrar.columns = ['Periodo', 'Importe Total', 'Variación vs Anterior (%)']
         def highlight_var(val):
             if pd.isna(val): return ''
@@ -385,4 +458,4 @@ with col_chat:
         with st.chat_message("assistant"):
             st.write(respuesta)
     else:
-        st.info("💬 **Asistente Preparado:** Aclaraciones sobre rubros")
+        st.info("💬 **Asistente Preparado:** Extraigo insights, justifico variaciones y calculo totales. ¿Qué desea auditar hoy?")
