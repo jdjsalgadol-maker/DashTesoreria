@@ -10,18 +10,17 @@ import io
 import os
 
 # =============================================================================
-# 1. CONSTANTES Y PALETA CORPORATIVA (NUEVA ESCALA AZUL/GRIS)
+# 1. CONSTANTES Y PALETA CORPORATIVA (ESCALA AZUL/GRIS - SIN ROJOS)
 # =============================================================================
 APP_TITULO = "Dashboard Analítico de Tesorería"
 LIMITE_BASICO_S = 60
 
-# Nueva paleta ejecutiva
+# Paleta ejecutiva estricta
 CORP_BLUE = "#1F618D"       # Azul corporativo principal (Barras, chips, bordes)
 CORP_BLUE_SOFT = "#D4E6F1"  # Azul claro (Barras no seleccionadas)
-CORP_GRAY = "#34495E"       # Gris pizarra oscuro (Textos, controles)
+CORP_GRAY = "#34495E"       # Gris pizarra oscuro (Textos, controles, alertas)
 BG_LIGHT = "#F8F9F9"        # Fondo neutro
 
-SUBE = "#B3261E"   # Rojo (Solo para variaciones negativas/alertas)
 BAJA = "#1B7A3A"   # Verde (Solo para variaciones positivas/ahorros)
 
 MESES_LARGO = {
@@ -138,7 +137,7 @@ def analizar_tendencia(serie: pd.Series) -> dict:
     pend, _ = np.polyfit(x, y, 1)
     umbral = 0.015 * media
     
-    if pend > umbral: return {"estado": "📈 Alcista (Expansión)", "color": SUBE}
+    if pend > umbral: return {"estado": "📈 Alcista (Expansión)", "color": CORP_GRAY}
     elif pend < -umbral: return {"estado": "📉 Bajista (Contracción)", "color": BAJA}
     else: return {"estado": "➡️ Estable (Controlado)", "color": CORP_GRAY}
 
@@ -181,7 +180,8 @@ def check_password():
     elif pwd == "premium123":
         st.session_state.authenticated, st.session_state.user_type, st.session_state.login_time = True, "Premium", time.time()
     else:
-        st.error("⚠️ Clave incorrecta.")
+        # st.warning elimina el fondo rojo de error nativo de Streamlit
+        st.warning("⚠️ Clave incorrecta. Intente nuevamente.")
 
 if not st.session_state.authenticated:
     st.title("🔐 Portal de Inteligencia Financiera")
@@ -309,7 +309,8 @@ with col_var:
         df_mostrar.columns = ['Periodo', 'Importe Total', 'Variación vs Anterior (%)']
         def highlight_var(val):
             if pd.isna(val): return ''
-            return f'color: {SUBE}; font-weight: 600;' if val > 0 else f'color: {BAJA}; font-weight: 600;'
+            # Se usa CORP_GRAY para subidas en lugar del antiguo rojo, manteniendo el verde para ahorros
+            return f'color: {CORP_GRAY}; font-weight: 600;' if val > 0 else f'color: {BAJA}; font-weight: 600;'
         st.dataframe(df_mostrar.style.format({'Importe Total': lambda x: f"${x:,.0f}", 'Variación vs Anterior (%)': lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"}).map(highlight_var, subset=['Variación vs Anterior (%)']), use_container_width=True, height=350)
     else:
         st.info("💡 Faltan periodos secuenciales para variaciones (MoM).")
