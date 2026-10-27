@@ -2,22 +2,18 @@ import os
 import time
 
 # =============================================================================
-# 0. AUTO-CONFIGURACIÓN DEL TEMA NATIVO (ELIMINA EL ROJO DE RAÍZ)
+# 0. AUTO-CONFIGURACIÓN DEL TEMA NATIVO
 # =============================================================================
 def setup_theme():
-    """Genera el archivo config.toml para forzar el Azul Corporativo en los widgets."""
     os.makedirs(".streamlit", exist_ok=True)
     config_path = ".streamlit/config.toml"
     theme_config = '[theme]\nprimaryColor="#1F618D"\n'
-    
-    # Escribe la configuración si no existe
     if not os.path.exists(config_path):
         with open(config_path, "w") as f:
             f.write(theme_config)
 
 setup_theme()
 
-# Importamos Streamlit DESPUÉS de configurar el tema
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -27,17 +23,16 @@ import re
 import unicodedata
 
 # =============================================================================
-# 1. CONSTANTES Y PALETA CORPORATIVA (ESCALA AZUL/GRIS ESTRICTA)
+# 1. CONSTANTES Y PALETA CORPORATIVA 
 # =============================================================================
 APP_TITULO = "Dashboard Analítico de Tesorería"
 LIMITE_BASICO_S = 60
 
-# Paleta Ejecutiva (0% Rojo)
-CORP_BLUE = "#1F618D"       # Azul corporativo principal (Barras, bordes)
-CORP_BLUE_SOFT = "#D4E6F1"  # Azul claro (Barras no seleccionadas)
-CORP_GRAY = "#34495E"       # Gris pizarra (Textos, controles, alzas de gasto)
-BG_LIGHT = "#F8F9F9"        # Fondo neutro
-BAJA = "#1B7A3A"            # Verde (Solo para variaciones positivas/ahorros)
+CORP_BLUE = "#1F618D"       
+CORP_BLUE_SOFT = "#D4E6F1"  
+CORP_GRAY = "#34495E"       
+BG_LIGHT = "#F8F9F9"        
+BAJA = "#1B7A3A"            
 
 MESES_LARGO = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo",
@@ -131,9 +126,6 @@ def cargar_datos(file) -> pd.DataFrame:
     
     return out
 
-# =============================================================================
-# 4. ANALÍTICA AVANZADA
-# =============================================================================
 def analizar_tendencia(serie: pd.Series) -> dict:
     n = len(serie)
     vacio = dict(estado="Datos insuficientes", color=CORP_GRAY)
@@ -145,17 +137,15 @@ def analizar_tendencia(serie: pd.Series) -> dict:
     pend, _ = np.polyfit(x, y, 1)
     umbral = 0.015 * media
     
-    # Se eliminan los tonos rojos de las tendencias
     if pend > umbral: return {"estado": "📈 Alcista (Expansión)", "color": CORP_GRAY}
     elif pend < -umbral: return {"estado": "📉 Bajista (Contracción)", "color": BAJA}
     else: return {"estado": "➡️ Estable (Controlado)", "color": CORP_GRAY}
 
 # =============================================================================
-# 5. CONFIGURACIÓN UI Y LOGIN
+# 4. CONFIGURACIÓN UI Y LOGIN
 # =============================================================================
 st.set_page_config(page_title=APP_TITULO, page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
-# CSS de respaldo para asegurar los elementos visuales en Azul y Gris
 st.markdown(f'''
     <style>
     .titulo-panel {{
@@ -192,7 +182,6 @@ def check_password():
 
 if not st.session_state.authenticated:
     st.title("🔐 Portal de Inteligencia Financiera")
-    st.write("Ingrese sus credenciales corporativas para acceder al cuadro de mando.")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.text_input("Clave de acceso:", type="password", key="password")
@@ -216,7 +205,7 @@ if st.sidebar.button("Cerrar Sesión"):
 st.sidebar.markdown("---")
 
 # =============================================================================
-# 6. PANEL LATERAL (CARGA Y FILTROS)
+# 5. PANEL LATERAL (CARGA Y FILTROS)
 # =============================================================================
 st.sidebar.title("🎛️ Filtros de Análisis")
 archivo_subido = st.sidebar.file_uploader("📂 Origen de Datos (Excel)", type=["xlsx", "xls"])
@@ -241,14 +230,27 @@ tipos_sel = [t for t in df['Tipo'].dropna().unique() if st.sidebar.checkbox(str(
 df_filt = df[(df['Año'] >= anios[0]) & (df['Año'] <= anios[1]) & (df['Mes'].isin(meses_ids)) & (df['Tipo'].isin(tipos_sel))]
 
 # =============================================================================
-# 7. FILTRADO CRUZADO Y KPIs
+# 6. FILTRADO CRUZADO BIDIRECCIONAL Y KPIs
 # =============================================================================
 cuenta_sel = None
 if "grafico_cuentas" in st.session_state:
-    puntos = st.session_state["grafico_cuentas"].get("selection", {}).get("points", [])
-    if puntos: cuenta_sel = puntos[0]["y"]
+    puntos_c = st.session_state["grafico_cuentas"].get("selection", {}).get("points", [])
+    if puntos_c: cuenta_sel = puntos_c[0]["y"]
 
-df_dinamico = df_filt[df_filt['Rubro'] == cuenta_sel] if cuenta_sel else df_filt
+entidad_sel = None
+if "grafico_entidades" in st.session_state:
+    puntos_e = st.session_state["grafico_entidades"].get("selection", {}).get("points", [])
+    if puntos_e: entidad_sel = puntos_e[0]["y"]
+
+# Dataframes para los gráficos (ignoran su propio filtro para permitir visualizar el resto del top y deseleccionar)
+df_para_cuentas = df_filt[df_filt['Entidad'] == entidad_sel] if entidad_sel else df_filt
+df_para_entidades = df_filt[df_filt['Rubro'] == cuenta_sel] if cuenta_sel else df_filt
+
+# Dataframe dinámico total (Aplica todos los clics y filtros de la página)
+df_dinamico = df_filt.copy()
+if cuenta_sel: df_dinamico = df_dinamico[df_dinamico['Rubro'] == cuenta_sel]
+if entidad_sel: df_dinamico = df_dinamico[df_dinamico['Entidad'] == entidad_sel]
+
 
 st.markdown('<div class="titulo-panel">Resumen Ejecutivo de Métricas</div>', unsafe_allow_html=True)
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -258,13 +260,18 @@ meses_unicos = df_dinamico['Periodo'].nunique()
 prom_mensual = total_gastos / meses_unicos if meses_unicos > 0 else 0
 tendencia_res = analizar_tendencia(df_dinamico.groupby('Periodo')['Importe'].sum().sort_index())
 
+filtros_activos = []
+if cuenta_sel: filtros_activos.append(cuenta_sel)
+if entidad_sel: filtros_activos.append(entidad_sel)
+txt_segmento = " + ".join(filtros_activos) if filtros_activos else "Consolidado Global"
+
 kpi1.metric("Importe Acumulado", format_currency(total_gastos))
 kpi2.metric("Media de Gasto Mensual", format_currency(prom_mensual))
 kpi3.metric("Vector de Tendencia", tendencia_res["estado"])
-kpi4.metric("Segmento Analizado", cuenta_sel if cuenta_sel else "Consolidado Global")
+kpi4.metric("Segmento Analizado", txt_segmento)
 
 # =============================================================================
-# 8. VISUALIZACIONES PLOTLY
+# 7. VISUALIZACIONES PLOTLY
 # =============================================================================
 st.markdown("---")
 st.markdown('<div class="titulo-panel">Evolución Cronológica del Gasto</div>', unsafe_allow_html=True)
@@ -287,24 +294,32 @@ st.plotly_chart(fig_line, use_container_width=True)
 col_bar1, col_bar2 = st.columns(2)
 with col_bar1:
     st.markdown('<div class="titulo-panel">Distribución por Rubro Contable</div>', unsafe_allow_html=True)
-    cuenta_df = df_filt.groupby('Rubro')['Importe'].sum().reset_index().sort_values('Importe')
-    colores = [CORP_BLUE if (not cuenta_sel or c == cuenta_sel) else CORP_BLUE_SOFT for c in cuenta_df['Rubro']]
+    st.caption("👆 *Interactivo: Seleccione un rubro para filtrar.*")
     
-    fig_bar1 = px.bar(cuenta_df, x='Importe', y='Rubro', text=cuenta_df['Importe'].apply(fmt), orientation='h')
-    fig_bar1.update_traces(marker_color=colores, textposition='outside')
+    cuenta_df = df_para_cuentas.groupby('Rubro')['Importe'].sum().reset_index().sort_values('Importe')
+    cuenta_df['Texto_Hover'] = cuenta_df['Importe'].apply(fmt)
+    colores_c = [CORP_BLUE if (not cuenta_sel or c == cuenta_sel) else CORP_BLUE_SOFT for c in cuenta_df['Rubro']]
+    
+    fig_bar1 = px.bar(cuenta_df, x='Importe', y='Rubro', text='Texto_Hover', orientation='h')
+    fig_bar1.update_traces(marker_color=colores_c, textposition='outside')
     fig_bar1.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(title=""), margin=dict(l=10, r=50, t=10, b=10), height=400, clickmode='event+select')
     st.plotly_chart(fig_bar1, use_container_width=True, on_select="rerun", selection_mode="points", key="grafico_cuentas")
 
 with col_bar2:
     st.markdown('<div class="titulo-panel">Concentración por Entidad / Tercero</div>', unsafe_allow_html=True)
-    banco_df = df_dinamico.groupby('Entidad')['Importe'].sum().reset_index().sort_values('Importe').tail(15)
-    fig_bar2 = px.bar(banco_df, x='Importe', y='Entidad', text=banco_df['Importe'].apply(fmt), orientation='h')
-    fig_bar2.update_traces(marker_color=CORP_BLUE, textposition='outside')
-    fig_bar2.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(title=""), margin=dict(l=10, r=50, t=10, b=10), height=400)
-    st.plotly_chart(fig_bar2, use_container_width=True)
+    st.caption("👆 *Interactivo: Seleccione un tercero para filtrar.*")
+    
+    banco_df = df_para_entidades.groupby('Entidad')['Importe'].sum().reset_index().sort_values('Importe').tail(15)
+    banco_df['Texto_Hover'] = banco_df['Importe'].apply(fmt)
+    colores_e = [CORP_BLUE if (not entidad_sel or e == entidad_sel) else CORP_BLUE_SOFT for e in banco_df['Entidad']]
+    
+    fig_bar2 = px.bar(banco_df, x='Importe', y='Entidad', text='Texto_Hover', orientation='h')
+    fig_bar2.update_traces(marker_color=colores_e, textposition='outside')
+    fig_bar2.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(title=""), margin=dict(l=10, r=50, t=10, b=10), height=400, clickmode='event+select')
+    st.plotly_chart(fig_bar2, use_container_width=True, on_select="rerun", selection_mode="points", key="grafico_entidades")
 
 # =============================================================================
-# 9. MATRIZ MoM Y ASISTENTE IA NLP
+# 8. MATRIZ MoM Y ASISTENTE IA NLP
 # =============================================================================
 st.markdown("---")
 col_var, col_chat = st.columns([1.5, 1.2])
@@ -317,7 +332,6 @@ with col_var:
         df_mostrar.columns = ['Periodo', 'Importe Total', 'Variación vs Anterior (%)']
         def highlight_var(val):
             if pd.isna(val): return ''
-            # Tonos estrictamente corporativos (Gris oscuro para alzas, Verde para bajas)
             return f'color: {CORP_GRAY}; font-weight: 600;' if val > 0 else f'color: {BAJA}; font-weight: 600;'
         st.dataframe(df_mostrar.style.format({'Importe Total': lambda x: f"${x:,.0f}", 'Variación vs Anterior (%)': lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"}).map(highlight_var, subset=['Variación vs Anterior (%)']), use_container_width=True, height=350)
     else:
