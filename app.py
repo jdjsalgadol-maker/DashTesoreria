@@ -1,8 +1,7 @@
 """Dashboard Analítico de Tesorería.
 
 Aplicación Streamlit de un solo archivo: login con perfiles, filtros globales,
-filtrado cruzado nativo (Plotly + ``on_select``), KPIs, tendencia por
-regresión lineal, matriz de variación MoM/YoY y un asistente analítico con
+filtrado cruzado nativo (Plotly + ``on_select``), KPIs, tendencia,\ncomparativo de meses y un asistente analítico con
 motor de lenguaje natural local (opcionalmente apoyado por un LLM).
 
 Ejecución:  streamlit run app.py
@@ -58,9 +57,9 @@ NAVY_2 = "#14304A"
 INK = "#1B2A3A"
 MUTED = "#566678"
 
+CORP_BLUE_SOFT = "#D4E6F1"
 CORP_GRAY = "#34495E"
 CORP_BLUE = "#1F618D"
-BLUE_SOFT = "#D4E6F1"
 GOLD = "#FEE715"
 BG = "#F2F5F9"
 BORDE = "#D9E1EA"
@@ -77,7 +76,6 @@ MESES_LARGO = {
 MESES_ABR = {k: v[:3] for k, v in MESES_LARGO.items()}
 COL_FECHA = ("Fe-contab-", "Fe/contab/", "Fe.contab.", "Fe-contab")
 SIN_DESCRIPCION = "(Sin descripción)"
-
 
 # Alias de entidades: el campo origen viene truncado a 20 caracteres.
 ALIAS_ENTIDAD = {
@@ -282,9 +280,9 @@ def analizar_tendencia(serie: pd.Series) -> dict:
     r2 = 1 - float(((y - ajuste) ** 2).sum()) / ss_tot if ss_tot else 0.0
     umbral = 0.015 * media
     if pend > umbral:
-        estado, color = "📈 Alcista", CORP_GRAY
+        estado, color = "📈 Subiendo", CORP_GRAY
     elif pend < -umbral:
-        estado, color = "📉 Bajista", BAJA
+        estado, color = "📉 Bajando", BAJA
     else:
         estado, color = "➡️ Estable", CORP_GRAY
     return dict(estado=estado, pendiente=float(pend), inter=float(inter),
@@ -313,9 +311,9 @@ def matriz_variacion(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame({
         "Periodo": [etiqueta_periodo(p) for p in idx],
         "Importe": full.to_numpy(),
-        "Δ vs mes anterior": (full - full.shift(1)).to_numpy(),
-        "Var. MoM %": ((full / full.shift(1) - 1) * 100).to_numpy(),
-        "Var. YoY %": ((full / full.shift(12) - 1) * 100).to_numpy(),
+        "Diferencia en Dinero": (full - full.shift(1)).to_numpy(),
+        "Crecimiento Mensual (%)": ((full / full.shift(1) - 1) * 100).to_numpy(),
+        "Crecimiento Anual (%)": ((full / full.shift(12) - 1) * 100).to_numpy(),
     })
     out = out.replace([np.inf, -np.inf], np.nan)
     return out.dropna(subset=["Importe"]).iloc[::-1].reset_index(drop=True)
@@ -416,7 +414,7 @@ def fig_barras(serie: pd.Series, seleccion: tuple = (), alto: int = 380) -> go.F
     """Barras horizontales; con selección activa se atenúan las demás."""
     s = serie.sort_values(ascending=True)
     activa = bool(seleccion)
-    colores = [CORP_BLUE if (not activa or k in seleccion) else BLUE_SOFT for k in s.index]
+    colores = [CORP_BLUE if (not activa or k in seleccion) else CORP_BLUE_SOFT for k in s.index]
     bordes = [NAVY if (activa and k in seleccion) else "rgba(0,0,0,0)" for k in s.index]
     textos = [fmt(v) for v in s.to_numpy()]
     fig = go.Figure(go.Bar(
@@ -548,7 +546,7 @@ h1, h2, h3, h4 { color: $navy !important; font-family: $font; }
     font-weight:600; }
 
 /* ---- Tarjetas KPI ---- */
-.kpi { background:#FFFFFF; border:1px solid $borde; border-left:6px solid #1F618D;
+.kpi { background:#FFFFFF; border:1px solid $borde; border-left:6px solid $blue;
     border-radius:10px; padding:16px 18px; min-height:128px;
     box-shadow:0 4px 14px rgba(11,31,51,.05); transition:transform .2s, box-shadow .2s; }
 .kpi:hover { transform:translateY(-3px); box-shadow:0 8px 22px rgba(11,31,51,.12); }
@@ -565,14 +563,14 @@ h1, h2, h3, h4 { color: $navy !important; font-family: $font; }
 /* ---- Barra de segmento activo ---- */
 .foco { background:#FFFFFF; border:1px solid $borde; border-left:6px solid $gold;
     border-radius:10px; padding:10px 16px; color:$ink; font-size:13.5px; }
-.chip { display:inline-block; background:$bluesoft; color:$navy; border:1px solid #1F618D;
+.chip { display:inline-block; background:$bluesoft; color:$navy; border:1px solid $blue;
     border-radius:999px; padding:2px 11px; margin:2px 4px 2px 0; font-weight:600;
     font-size:12.5px; }
 
 /* ---- Controles ---- */
-span[data-baseweb="tag"] { background:$bluesoft !important; border:1px solid #1F618D !important; }
+span[data-baseweb="tag"] { background:$bluesoft !important; border:1px solid $blue !important; }
 span[data-baseweb="tag"] span, span[data-baseweb="tag"] svg { color:$navy !important; fill:$navy !important; }
-div[data-baseweb="slider"] [role="slider"] { background-color:#1F618D !important; }
+div[data-baseweb="slider"] [role="slider"] { background-color:$blue !important; }
 [data-testid="stThumbValue"], [data-testid="stSliderThumbValue"] { background:$slate !important;
     color:#FFFFFF !important; font-weight:700; border-radius:4px; padding:0 6px; }
 div[data-baseweb="select"] > div, div[data-baseweb="input"] > div {
@@ -587,7 +585,7 @@ button[kind="primary"], button[data-testid="stBaseButton-primary"] {
 button[kind="primary"]:hover, button[data-testid="stBaseButton-primary"]:hover {
     border-color:$gold !important; color:$gold !important; }
 button[kind="secondary"], button[data-testid="stBaseButton-secondary"] {
-    background:#FFFFFF !important; color:$navy !important; border:1px solid #1F618D !important;
+    background:#FFFFFF !important; color:$navy !important; border:1px solid $blue !important;
     border-radius:8px; font-weight:600; }
 button[kind="secondary"]:hover, button[data-testid="stBaseButton-secondary"]:hover {
     background:$bluesoft !important; }
@@ -597,7 +595,7 @@ button[kind="secondary"] p, button[data-testid="stBaseButton-secondary"] p { col
 /* ---- Pestañas ---- */
 button[data-baseweb="tab"] { font-weight:600; font-size:15px; color:$muted; }
 button[data-baseweb="tab"][aria-selected="true"] { color:$navy; }
-[data-baseweb="tab-highlight"] { background-color:#1F618D !important; height:3px; }
+[data-baseweb="tab-highlight"] { background-color:$blue !important; height:3px; }
 
 /* ---- Contenedores, tablas y chat ---- */
 [data-testid="stVerticalBlockBorderWrapper"] { background:#FFFFFF; border:1px solid $borde !important;
@@ -607,7 +605,7 @@ button[data-baseweb="tab"][aria-selected="true"] { color:$navy; }
     border-radius:12px; padding:14px 16px; margin-bottom:10px; }
 [data-testid="stChatMessage"]:has([data-testid*="AvatarUser"]) { background:#EAF1F8; }
 [data-testid="stChatMessage"] p, [data-testid="stChatMessage"] li { color:$ink; }
-[data-testid="stChatInput"] { border:1px solid #1F618D; border-radius:12px; background:#FFFFFF; }
+[data-testid="stChatInput"] { border:1px solid $blue; border-radius:12px; background:#FFFFFF; }
 .login-head { color:$navy; font-size:26px; font-weight:800; text-align:center; margin-top:8vh; }
 .login-sub { color:$muted; text-align:center; margin-bottom:18px; font-size:14px; }
 """)
@@ -616,7 +614,7 @@ button[data-baseweb="tab"][aria-selected="true"] { color:$navy; }
 def inyectar_css() -> None:
     css = CSS.substitute(
         bg=BG, ink=INK, font=FUENTE, navy=NAVY, navy2=NAVY_2, muted=MUTED, borde=BORDE,
-        gold=GOLD, blue=CORP_BLUE, bluesoft=BLUE_SOFT, slate=CORP_GRAY, sube=SUBE, baja=BAJA)
+        gold=GOLD, blue=CORP_BLUE, bluesoft=CORP_BLUE_SOFT, slate=CORP_GRAY, sube=SUBE, baja=BAJA)
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
@@ -702,7 +700,7 @@ def pantalla_login() -> None:
                         autenticado=True, tipo_usuario=perfil,
                         hora_login=time.time(), expirado=False)
                     st.rerun()
-            st.warning("⚠️ Clave incorrecta. Intente nuevamente.")
+            st.error("Clave incorrecta. Intente nuevamente.")
         with st.expander("Perfiles de acceso"):
             st.markdown(f"- **Básico:** sesión limitada a {LIMITE_BASICO_S} segundos.\n"
                         "- **Premium:** acceso ilimitado y asistente con IA generativa "
@@ -1409,6 +1407,14 @@ def h_resumen(ctx: Ctx, c: Consulta) -> Respuesta:
                      + "\n".join(f"- {x}" for x in lineas), tabla=tabla, pie=_pie(a))
 
 
+def _notas(ctx: Ctx, c: Consulta, a: Alcance) -> list:
+    """Insights de estacionalidad según rubro(s) y meses mencionados."""
+    rubros = c.valores.get("Rubro") or list(ctx.f.focos)
+    meses = set().union(*[p.meses for p in c.periodos if p.meses]) if any(
+        p.meses for p in c.periodos) else set()
+    return notas_estacionales(a.df, rubros, meses) if rubros and meses else []
+
+
 def h_total(ctx: Ctx, c: Consulta) -> Respuesta:
     a = construir_alcance(ctx, c)
     if a.df.empty:
@@ -1768,7 +1774,7 @@ def h_filtros(ctx: Ctx, c: Consulta) -> Respuesta:
     if f.focos:
         partes.append("- **Rubro seleccionado (filtro cruzado):** " + ", ".join(f.focos))
     if f.focos_ent:
-        partes.append("- **Entidad seleccionado (filtro cruzado):** " + ", ".join(f.focos_ent))
+        partes.append("- **Entidad seleccionada (filtro cruzado):** " + ", ".join(f.focos_ent))
     return Respuesta("🎛️ **Filtros activos del tablero**\n\n" + "\n".join(partes))
 
 
@@ -2000,14 +2006,16 @@ def render_kpis(dyn: pd.DataFrame, serie: pd.Series, tend: dict) -> None:
         kpi_card("Neto contable",
                  f'<span style="color:{color_neto}">{money_html(neto)}</span>',
                  f"Gasto − menor gasto/ingreso<br><b>{lectura}</b>", color_neto),
-        kpi_card("Vector de tendencia", tend["estado"],
-                 (f"{pct_txt(tend['pct'], True)} por mes · R² {_num(tend['r2'], 2)}<br>"
-                  f"Umbral ±1,5 % del promedio") if len(serie) >= 3 else "Requiere ≥ 3 meses",
+        kpi_card("Tendencia del Gasto", tend["estado"],
+                 f"Cambio promedio: {pct_txt(tend['pct'], True)} al mes" if len(serie) >= 3 else "Necesita al menos 3 meses de datos",
                  tend["color"]),
     ]
     for col, html_card in zip(cols, tarjetas):
         col.markdown(html_card, unsafe_allow_html=True)
-    
+    st.markdown('<div class="nota">ℹ️ Las barras y líneas usan <b>valores absolutos</b> '
+                'para no distorsionar la escala; el <b>Neto contable</b> conserva el signo '
+                'del libro mayor.</div>', unsafe_allow_html=True)
+
 
 def _grafico(fig: go.Figure, clave: str, interactivo: bool = False) -> None:
     kwargs = dict(key=clave, config=PLOT_CFG, **_ancho(st.plotly_chart))
@@ -2045,6 +2053,10 @@ def render_panorama(df: pd.DataFrame, f: Filtros, dyn: pd.DataFrame, serie: pd.S
         _grafico(fig_barras(pd.concat([top, extra]), sel_e, alto=380),
                  f"g_ent_{ver}" if interactivo else "g_ent_fijo", interactivo)
 
+    with st.container(border=True):
+        panel("Estacionalidad: comparativo por año", "Mismo mes, distintos ejercicios")
+        _grafico(fig_estacional(dyn), "g_estacional")
+
 
 def _color_var(valor: float) -> str:
     if pd.isna(valor):
@@ -2059,14 +2071,14 @@ def _color_var(valor: float) -> str:
 def render_detalle(dyn: pd.DataFrame) -> None:
     izq, der = st.columns([1.25, 1])
     with izq, st.container(border=True):
-        panel("Matriz de variación (MoM / YoY)", "Rojo: el gasto sube · Verde: el gasto baja")
+        panel("Comparativo Mensual y Anual", "Rojo: el gasto sube · Verde: el gasto baja")
         matriz = matriz_variacion(dyn)
         if len(matriz) > 1:
             estilo = (matriz.style
-                      .format({"Importe": cop, "Δ vs mes anterior": cop,
-                               "Var. MoM %": lambda v: pct_txt(v, True),
-                               "Var. YoY %": lambda v: pct_txt(v, True)}, na_rep="—")
-                      .map(_color_var, subset=["Δ vs mes anterior", "Var. MoM %", "Var. YoY %"]))
+                      .format({"Importe": cop, "Diferencia en Dinero": cop,
+                               "Crecimiento Mensual (%)": lambda v: pct_txt(v, True),
+                               "Crecimiento Anual (%)": lambda v: pct_txt(v, True)}, na_rep="—")
+                      .map(_color_var, subset=["Diferencia en Dinero", "Crecimiento Mensual (%)", "Crecimiento Anual (%)"]))
             st.dataframe(estilo, hide_index=True, height=470, **_ancho(st.dataframe))
             st.download_button("⬇️ Descargar matriz (CSV)",
                                matriz.to_csv(index=False).encode("utf-8-sig"),
@@ -2181,7 +2193,7 @@ def render_asistente(df: pd.DataFrame, f: Filtros) -> None:
 def main() -> None:
     st.set_page_config(page_title=APP_TITULO, page_icon="📊", layout="wide",
                        initial_sidebar_state="expanded")
-    
+    inyectar_css()
     init_estado()
     if not st.session_state.autenticado:
         pantalla_login()
