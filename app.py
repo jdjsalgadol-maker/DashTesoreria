@@ -30,6 +30,19 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # =============================================================================
+# 0. AUTO-CONFIGURACIÓN DEL TEMA NATIVO
+# =============================================================================
+def setup_theme():
+    os.makedirs(".streamlit", exist_ok=True)
+    config_path = ".streamlit/config.toml"
+    theme_config = '[theme]\nprimaryColor="#1F618D"\n'
+    if not os.path.exists(config_path):
+        with open(config_path, "w") as f:
+            f.write(theme_config)
+
+setup_theme()
+
+# =============================================================================
 # 1. CONSTANTES Y PALETA CORPORATIVA
 # =============================================================================
 APP_TITULO = "Dashboard Analítico de Tesorería"
@@ -44,9 +57,10 @@ NAVY = "#0B1F33"
 NAVY_2 = "#14304A"
 INK = "#1B2A3A"
 MUTED = "#566678"
-BLUE = "#1F618D"
+
+CORP_GRAY = "#34495E"
+CORP_BLUE = "#1F618D"
 BLUE_SOFT = "#D4E6F1"
-SLATE = "#34495E"
 GOLD = "#FEE715"
 BG = "#F2F5F9"
 BORDE = "#D9E1EA"
@@ -63,6 +77,7 @@ MESES_LARGO = {
 MESES_ABR = {k: v[:3] for k, v in MESES_LARGO.items()}
 COL_FECHA = ("Fe-contab-", "Fe/contab/", "Fe.contab.", "Fe-contab")
 SIN_DESCRIPCION = "(Sin descripción)"
+
 
 # Alias de entidades: el campo origen viene truncado a 20 caracteres.
 ALIAS_ENTIDAD = {
@@ -267,11 +282,11 @@ def analizar_tendencia(serie: pd.Series) -> dict:
     r2 = 1 - float(((y - ajuste) ** 2).sum()) / ss_tot if ss_tot else 0.0
     umbral = 0.015 * media
     if pend > umbral:
-        estado, color = "📈 Alcista", SUBE
+        estado, color = "📈 Alcista", CORP_GRAY
     elif pend < -umbral:
         estado, color = "📉 Bajista", BAJA
     else:
-        estado, color = "➡️ Estable", NAVY_2
+        estado, color = "➡️ Estable", CORP_GRAY
     return dict(estado=estado, pendiente=float(pend), inter=float(inter),
                 pct=pend / media * 100 if media else 0.0, r2=r2, media=media,
                 color=color)
@@ -360,8 +375,8 @@ def fig_evolucion(serie: pd.Series, tend: dict) -> go.Figure:
         x=x, y=y, name="Importe mensual", mode="lines+markers+text",
         text=_etiquetas_clave(list(y)), textposition="top center",
         textfont=dict(color=INK, size=12),
-        line=dict(color=SLATE, width=3.5, shape="linear"),
-        marker=dict(color=BLUE, size=10, line=dict(width=2, color="#FFFFFF")),
+        line=dict(color=CORP_GRAY, width=3.5, shape="linear"),
+        marker=dict(color=CORP_BLUE, size=10, line=dict(width=2, color="#FFFFFF")),
         fill="tozeroy", fillcolor="rgba(31,97,141,0.10)",
         customdata=[fmt(v) for v in y],
         hovertemplate="<b>%{x}</b><br>Importe: %{customdata}<extra></extra>"))
@@ -378,7 +393,7 @@ def fig_evolucion(serie: pd.Series, tend: dict) -> go.Figure:
 
 
 def fig_evolucion_comparada(df: pd.DataFrame, columna: str) -> go.Figure:
-    paleta = [BLUE, SLATE, "#7FB3D5", "#85929E"]
+    paleta = [CORP_BLUE, CORP_GRAY, "#7FB3D5", "#85929E"]
     g = df.groupby(["Periodo", columna])["Importe"].sum().reset_index()
     periodos = sorted(g["Periodo"].unique())
     etiquetas = [etiqueta_periodo(p) for p in periodos]
@@ -401,7 +416,7 @@ def fig_barras(serie: pd.Series, seleccion: tuple = (), alto: int = 380) -> go.F
     """Barras horizontales; con selección activa se atenúan las demás."""
     s = serie.sort_values(ascending=True)
     activa = bool(seleccion)
-    colores = [BLUE if (not activa or k in seleccion) else BLUE_SOFT for k in s.index]
+    colores = [CORP_BLUE if (not activa or k in seleccion) else BLUE_SOFT for k in s.index]
     bordes = [NAVY if (activa and k in seleccion) else "rgba(0,0,0,0)" for k in s.index]
     textos = [fmt(v) for v in s.to_numpy()]
     fig = go.Figure(go.Bar(
@@ -424,7 +439,7 @@ def fig_estacional(df: pd.DataFrame) -> go.Figure:
     """Comparativo por año: un trazo por ejercicio sobre meses calendario."""
     g = df.groupby(["Año", "Mes"])["Importe"].sum().reset_index()
     anios = sorted(g["Año"].unique())
-    paleta = {a: c for a, c in zip(anios[::-1], [BLUE, SLATE, "#7FB3D5", "#AEB6BF"])}
+    paleta = {a: c for a, c in zip(anios[::-1], [CORP_BLUE, CORP_GRAY, "#7FB3D5", "#AEB6BF"])}
     fig = go.Figure()
     for a in anios:
         s = g[g["Año"] == a].set_index("Mes")["Importe"].reindex(range(1, 13))
@@ -444,7 +459,7 @@ def fig_estacional(df: pd.DataFrame) -> go.Figure:
 def fig_meses(serie: pd.Series, destacado: int | None = None) -> go.Figure:
     """Columnas por mes calendario (1-12) con el mes pico resaltado."""
     s = serie.reindex(range(1, 13)).fillna(0)
-    colores = [SLATE if m == destacado else BLUE for m in s.index]
+    colores = [CORP_GRAY if m == destacado else CORP_BLUE for m in s.index]
     textos = [fmt(v) for v in s]
     fig = go.Figure(go.Bar(
         x=[MESES_ABR[m].capitalize() for m in s.index], y=s.to_numpy(),
@@ -464,7 +479,7 @@ def fig_proyeccion(serie: pd.Series, tend: dict, proyeccion: float,
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=x, y=y, name="Histórico", mode="lines+markers",
-        line=dict(color=SLATE, width=3), marker=dict(color=BLUE, size=8,
+        line=dict(color=CORP_GRAY, width=3), marker=dict(color=CORP_BLUE, size=8,
                                                      line=dict(width=1.5, color="#FFFFFF")),
         fill="tozeroy", fillcolor="rgba(31,97,141,0.08)", hoverinfo="skip"))
     n = len(y)
@@ -472,7 +487,7 @@ def fig_proyeccion(serie: pd.Series, tend: dict, proyeccion: float,
         x=[x[-1], etiqueta_prox], y=[y[-1], proyeccion], name="Proyección",
         mode="lines+markers+text", text=["", fmt(proyeccion)], textposition="top center",
         textfont=dict(color=INK, size=12),
-        line=dict(color=BLUE, width=3, dash="dot"),
+        line=dict(color=CORP_BLUE, width=3, dash="dot"),
         marker=dict(color=GOLD, size=12, line=dict(width=2, color=NAVY))))
     _estilo(fig, 320, leyenda=True)
     _eje_x_periodos(fig, n + 1)
@@ -533,7 +548,7 @@ h1, h2, h3, h4 { color: $navy !important; font-family: $font; }
     font-weight:600; }
 
 /* ---- Tarjetas KPI ---- */
-.kpi { background:#FFFFFF; border:1px solid $borde; border-left:6px solid $blue;
+.kpi { background:#FFFFFF; border:1px solid $borde; border-left:6px solid #1F618D;
     border-radius:10px; padding:16px 18px; min-height:128px;
     box-shadow:0 4px 14px rgba(11,31,51,.05); transition:transform .2s, box-shadow .2s; }
 .kpi:hover { transform:translateY(-3px); box-shadow:0 8px 22px rgba(11,31,51,.12); }
@@ -550,14 +565,14 @@ h1, h2, h3, h4 { color: $navy !important; font-family: $font; }
 /* ---- Barra de segmento activo ---- */
 .foco { background:#FFFFFF; border:1px solid $borde; border-left:6px solid $gold;
     border-radius:10px; padding:10px 16px; color:$ink; font-size:13.5px; }
-.chip { display:inline-block; background:$bluesoft; color:$navy; border:1px solid $blue;
+.chip { display:inline-block; background:$bluesoft; color:$navy; border:1px solid #1F618D;
     border-radius:999px; padding:2px 11px; margin:2px 4px 2px 0; font-weight:600;
     font-size:12.5px; }
 
 /* ---- Controles ---- */
-span[data-baseweb="tag"] { background:$bluesoft !important; border:1px solid $blue !important; }
+span[data-baseweb="tag"] { background:$bluesoft !important; border:1px solid #1F618D !important; }
 span[data-baseweb="tag"] span, span[data-baseweb="tag"] svg { color:$navy !important; fill:$navy !important; }
-div[data-baseweb="slider"] [role="slider"] { background-color:$blue !important; }
+div[data-baseweb="slider"] [role="slider"] { background-color:#1F618D !important; }
 [data-testid="stThumbValue"], [data-testid="stSliderThumbValue"] { background:$slate !important;
     color:#FFFFFF !important; font-weight:700; border-radius:4px; padding:0 6px; }
 div[data-baseweb="select"] > div, div[data-baseweb="input"] > div {
@@ -572,7 +587,7 @@ button[kind="primary"], button[data-testid="stBaseButton-primary"] {
 button[kind="primary"]:hover, button[data-testid="stBaseButton-primary"]:hover {
     border-color:$gold !important; color:$gold !important; }
 button[kind="secondary"], button[data-testid="stBaseButton-secondary"] {
-    background:#FFFFFF !important; color:$navy !important; border:1px solid $blue !important;
+    background:#FFFFFF !important; color:$navy !important; border:1px solid #1F618D !important;
     border-radius:8px; font-weight:600; }
 button[kind="secondary"]:hover, button[data-testid="stBaseButton-secondary"]:hover {
     background:$bluesoft !important; }
@@ -582,7 +597,7 @@ button[kind="secondary"] p, button[data-testid="stBaseButton-secondary"] p { col
 /* ---- Pestañas ---- */
 button[data-baseweb="tab"] { font-weight:600; font-size:15px; color:$muted; }
 button[data-baseweb="tab"][aria-selected="true"] { color:$navy; }
-[data-baseweb="tab-highlight"] { background-color:$blue !important; height:3px; }
+[data-baseweb="tab-highlight"] { background-color:#1F618D !important; height:3px; }
 
 /* ---- Contenedores, tablas y chat ---- */
 [data-testid="stVerticalBlockBorderWrapper"] { background:#FFFFFF; border:1px solid $borde !important;
@@ -592,7 +607,7 @@ button[data-baseweb="tab"][aria-selected="true"] { color:$navy; }
     border-radius:12px; padding:14px 16px; margin-bottom:10px; }
 [data-testid="stChatMessage"]:has([data-testid*="AvatarUser"]) { background:#EAF1F8; }
 [data-testid="stChatMessage"] p, [data-testid="stChatMessage"] li { color:$ink; }
-[data-testid="stChatInput"] { border:1px solid $blue; border-radius:12px; background:#FFFFFF; }
+[data-testid="stChatInput"] { border:1px solid #1F618D; border-radius:12px; background:#FFFFFF; }
 .login-head { color:$navy; font-size:26px; font-weight:800; text-align:center; margin-top:8vh; }
 .login-sub { color:$muted; text-align:center; margin-bottom:18px; font-size:14px; }
 """)
@@ -601,7 +616,7 @@ button[data-baseweb="tab"][aria-selected="true"] { color:$navy; }
 def inyectar_css() -> None:
     css = CSS.substitute(
         bg=BG, ink=INK, font=FUENTE, navy=NAVY, navy2=NAVY_2, muted=MUTED, borde=BORDE,
-        gold=GOLD, blue=BLUE, bluesoft=BLUE_SOFT, slate=SLATE, sube=SUBE, baja=BAJA)
+        gold=GOLD, blue=CORP_BLUE, bluesoft=BLUE_SOFT, slate=CORP_GRAY, sube=SUBE, baja=BAJA)
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
@@ -630,7 +645,7 @@ def hero(titulo: str, subtitulo: str, badges: list) -> None:
         f'<div class="badges">{chips}</div></div>', unsafe_allow_html=True)
 
 
-def kpi_card(etiqueta: str, valor: str, sub: str = "", acento: str = BLUE) -> str:
+def kpi_card(etiqueta: str, valor: str, sub: str = "", acento: str = CORP_BLUE) -> str:
     return (f'<div class="kpi" style="border-left-color:{acento}">'
             f'<div class="kpi-label">{etiqueta}</div><div class="kpi-value">{valor}</div>'
             f'<div class="kpi-sub">{sub}</div></div>')
@@ -687,7 +702,7 @@ def pantalla_login() -> None:
                         autenticado=True, tipo_usuario=perfil,
                         hora_login=time.time(), expirado=False)
                     st.rerun()
-            st.error("Clave incorrecta. Intente nuevamente.")
+            st.warning("⚠️ Clave incorrecta. Intente nuevamente.")
         with st.expander("Perfiles de acceso"):
             st.markdown(f"- **Básico:** sesión limitada a {LIMITE_BASICO_S} segundos.\n"
                         "- **Premium:** acceso ilimitado y asistente con IA generativa "
@@ -1394,14 +1409,6 @@ def h_resumen(ctx: Ctx, c: Consulta) -> Respuesta:
                      + "\n".join(f"- {x}" for x in lineas), tabla=tabla, pie=_pie(a))
 
 
-def _notas(ctx: Ctx, c: Consulta, a: Alcance) -> list:
-    """Insights de estacionalidad según rubro(s) y meses mencionados."""
-    rubros = c.valores.get("Rubro") or list(ctx.f.focos)
-    meses = set().union(*[p.meses for p in c.periodos if p.meses]) if any(
-        p.meses for p in c.periodos) else set()
-    return notas_estacionales(a.df, rubros, meses) if rubros and meses else []
-
-
 def h_total(ctx: Ctx, c: Consulta) -> Respuesta:
     a = construir_alcance(ctx, c)
     if a.df.empty:
@@ -1741,4 +1748,529 @@ def h_calidad(ctx: Ctx, c: Consulta) -> Respuesta:
     por_rubro = (df.assign(sd=sd).groupby("Rubro")
                  .agg(Registros=("sd", "size"), Sin_desc=("sd", "sum")))
     por_rubro["% sin descripción"] = por_rubro["Sin_desc"] / por_rubro["Registros"] * 100
-    por_rubro = por_rubro.
+    por_rubro = por_rubro.sort_values("% sin descripción", ascending=False).reset_index()
+    sin_ent = (df["Entidad"] == "Sin entidad").mean() * 100
+    txt = (f"🧪 **Calidad de datos**\n\n- Registros sin descripción: "
+           f"**{_num(sd.sum(), 0)}** ({pct_txt(sd.mean() * 100)}), equivalentes a "
+           f"{money(df.loc[sd, 'Importe'].sum())}.\n- Registros sin entidad: {pct_txt(sin_ent)}.\n"
+           f"- Cobertura: {_rango_texto(df)}.\n- Rubro más incompleto: "
+           f"**{por_rubro.iloc[0]['Rubro']}** ({pct_txt(por_rubro.iloc[0]['% sin descripción'])}).")
+    t = _fmt_tabla(por_rubro[["Rubro", "Registros", "% sin descripción"]],
+                   porcentaje=("% sin descripción",))
+    return Respuesta(txt, tabla=t, pie=_pie(a))
+
+
+def h_filtros(ctx: Ctx, c: Consulta) -> Respuesta:
+    f = ctx.f
+    partes = [f"- **Años:** {f.anios[0]}–{f.anios[1]}",
+              "- **Meses:** " + ", ".join(MESES_LARGO[m] for m in f.meses),
+              "- **Origen de cuenta:** " + ", ".join(f.tipos)]
+    if f.focos:
+        partes.append("- **Rubro seleccionado (filtro cruzado):** " + ", ".join(f.focos))
+    if f.focos_ent:
+        partes.append("- **Entidad seleccionado (filtro cruzado):** " + ", ".join(f.focos_ent))
+    return Respuesta("🎛️ **Filtros activos del tablero**\n\n" + "\n".join(partes))
+
+
+def h_cobertura(ctx: Ctx, c: Consulta) -> Respuesta:
+    df = ctx.df
+    return Respuesta(f"🗂️ El archivo cubre **{_rango_texto(df)}**: "
+                     f"{_num(len(df), 0)} registros, {df['Rubro'].nunique()} rubros y "
+                     f"{df['Entidad'].nunique()} entidades.")
+
+
+def h_glosario(ctx: Ctx, c: Consulta) -> Respuesta:
+    hallados = [(t, d) for rx, t, d in GLOSARIO if re.search(rf"\b({rx})\b", c.norm)]
+    if hallados:
+        return Respuesta("\n\n".join(f"📖 **{t}**\n\n{d}" for t, d in hallados[:3]))
+    return Respuesta("📖 Puedo explicar: " + ", ".join(t for _, t, _ in GLOSARIO)
+                     + ". Pregunte, por ejemplo, *¿qué es el gravamen?*")
+
+
+def h_uso(ctx: Ctx, c: Consulta) -> Respuesta:
+    guia = [
+        (r"cruzad\w*|seleccion\w*|clic|click",
+         "**Filtro cruzado:** haga clic en una barra de *Rubro* o de *Entidad*; todo el "
+         "tablero se recalcula. Use *Quitar filtro* para limpiar."),
+        (r"restablec\w*|quito|borro|limpi\w*",
+         "**Quitar filtros:** botón *Quitar filtro cruzado* en la franja de segmento activo."),
+        (r"compar\w*", "**Comparar:** en *Modo de análisis* elija *Comparativa de cuentas* o "
+                       "*de entidades* (hasta 2)."),
+        (r"descarg\w*|export\w*|csv",
+         "**Exportar:** pestaña *Detalle y variación* → *Descargar matriz (CSV)*."),
+        (r"carg\w*|archivo|excel", "**Cargar datos:** panel lateral → *Origen de datos*."),
+        (r"sesion|tiempo|basico|premium",
+         "**Sesión:** el perfil Básico dura 60 s; Premium es ilimitado."),
+    ]
+    sel = [t for rx, t in guia if re.search(rx, c.norm)]
+    return Respuesta("🧭 " + "\n\n".join(sel or [t for _, t in guia]))
+
+
+def h_perfil(ctx: Ctx, c: Consulta) -> Respuesta:
+    """Menciona un segmento sin pedir nada concreto: perfil rápido."""
+    a = construir_alcance(ctx, c)
+    if a.df.empty:
+        return _vacio(a)
+    df = a.df
+    s = serie_mensual(df)
+    tot_ref = a.sin_valores["Importe"].sum()
+    top = (df.groupby("Concepto")["Importe"].sum().drop(SIN_DESCRIPCION, errors="ignore")
+           .sort_values(ascending=False).head(3))
+    txt = (f"🔎 **{_nombre_segmento(ctx, c)}** acumula **{money(df['Importe'].sum())}** "
+           f"({pct_txt(df['Importe'].sum() / tot_ref * 100)} del periodo) en "
+           f"{_num(len(df), 0)} registros.\n\n- Mes pico: {etiqueta_periodo(s.idxmax())} "
+           f"({money(s.max())}).\n- Media mensual: {money(s.mean())}.")
+    if not top.empty:
+        txt += "\n- Principales conceptos: " + "; ".join(
+            f"{k} ({money(v)})" for k, v in top.items()) + "."
+    notas = _notas(ctx, c, a)
+    if notas:
+        txt += "\n\n" + "\n\n".join(notas)
+    return Respuesta(txt + "\n\n*¿Quiere el detalle, la tendencia o una comparación?*",
+                     figura=fig_evolucion(s, analizar_tendencia(s)) if len(s) > 1 else None,
+                     pie=_pie(a))
+
+
+HANDLERS = {
+    "saludo": h_saludo, "gracias": h_gracias, "ayuda": h_ayuda, "resumen": h_resumen,
+    "total": h_total, "promedio": h_promedio, "conteo": h_conteo, "ranking": h_ranking,
+    "participacion": h_participacion, "concentracion": h_concentracion,
+    "comparacion": h_comparacion, "variacion": h_variacion, "tendencia": h_tendencia,
+    "pico": h_pico, "detalle": h_detalle, "estacionalidad": h_estacionalidad,
+    "neto": h_neto, "calidad": h_calidad, "filtros": h_filtros, "cobertura": h_cobertura,
+    "glosario": h_glosario, "uso": h_uso,
+}
+
+
+# ------------------------------------------------------------------ LLM opcional
+def obtener_api_key() -> str | None:
+    clave = os.environ.get("ANTHROPIC_API_KEY")
+    if clave:
+        return clave
+    try:
+        return st.secrets.get("ANTHROPIC_API_KEY")
+    except Exception:   # noqa: BLE001 - sin secrets.toml
+        return None
+
+
+def contexto_para_llm(ctx: Ctx) -> str:
+    """Resumen agregado (sin registros individuales ni terceros)."""
+    df = filtrar(ctx.df, ctx.f)
+    if df.empty:
+        return "Sin datos."
+    s = serie_mensual(df)
+    t = analizar_tendencia(s)
+    por = lambda col, n=8: df.groupby(col)["Importe"].sum().sort_values(  # noqa: E731
+        ascending=False).head(n)
+    return "\n".join([
+        f"Periodo: {_rango_texto(df)}; registros: {len(df)}.",
+        f"Importe absoluto: {df['Importe'].sum():.0f}; neto contable: "
+        f"{df['Importe_Neto'].sum():.0f} (negativo = ingresos > gastos).",
+        "Por mes: " + "; ".join(f"{p}={v:.0f}" for p, v in s.items()),
+        "Por rubro: " + "; ".join(f"{k}={v:.0f}" for k, v in por("Rubro").items()),
+        "Por origen: " + "; ".join(f"{k}={v:.0f}" for k, v in por("Tipo").items()),
+        "Top entidades: " + "; ".join(f"{k}={v:.0f}" for k, v in por("Entidad").items()),
+        f"Tendencia: {t['estado']} ({t['pct']:.2f}% mensual, R2 {t['r2']:.2f}).",
+        "Nota: Gravamen=GMF 4x1000; Rendimientos y Dcto pronto pago son menor gasto.",
+    ])
+
+
+def consultar_llm(pregunta: str, ctx: Ctx) -> str | None:
+    if not (ctx.usar_llm and ctx.api_key):
+        return None
+    historial = "\n".join(f"{r}: {t}" for r, t in ctx.historial[-6:])
+    cuerpo = {
+        "model": MODELO_LLM, "max_tokens": 700,
+        "system": ("Eres un analista financiero senior de tesorería. Responde en español, "
+                   "claro y breve, solo con base en el contexto de datos entregado; si el "
+                   "dato no está, dilo. Escapa el símbolo de pesos como \\$."),
+        "messages": [{"role": "user", "content":
+                      f"CONTEXTO:\n{contexto_para_llm(ctx)}\n\nCONVERSACIÓN:\n{historial}\n\n"
+                      f"PREGUNTA: {pregunta}"}],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=json.dumps(cuerpo).encode(),
+        headers={"x-api-key": ctx.api_key, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:   # noqa: S310
+            data = json.load(r)
+        txt = "".join(b.get("text", "") for b in data.get("content", [])
+                      if b.get("type") == "text").strip()
+        return txt or None
+    except Exception:   # noqa: BLE001 - la IA generativa es opcional
+        return None
+
+
+def sugerencias(ctx: Ctx) -> list:
+    df = filtrar(ctx.df, ctx.f)
+    top_r = (df.groupby("Rubro")["Importe"].sum().idxmax() if not df.empty else "Gravamen")
+    return ["Resumen ejecutivo", f"¿Por qué {top_r}? Detalle de conceptos",
+            "¿Cuál es la entidad con mayor gasto?", "¿Qué meses tuvieron picos atípicos?",
+            "Proyección del próximo mes", "¿Hay concentración en pocas entidades?"]
+
+
+def fallback(ctx: Ctx, c: Consulta) -> Respuesta:
+    df = filtrar(ctx.df, ctx.f)
+    top = (df.groupby("Rubro")["Importe"].sum().idxmax() if not df.empty else "Gravamen")
+    return Respuesta(
+        "🤖 No logré identificar con claridad su consulta, pero puedo ayudarle con "
+        "totales, rankings, comparaciones, variaciones, tendencia y auditoría de conceptos."
+        f"\n\nEl rubro de mayor gasto ahora es **{top}**. Pruebe con:\n\n"
+        f"1. *¿Por qué {top}? Detalle de conceptos*\n2. *¿Cuál es el mayor banco?*\n"
+        "3. *Resumen ejecutivo*\n\nEscriba **ayuda** para ver todo lo que sé hacer.")
+
+
+def responder(texto: str, ctx: Ctx, previo: dict) -> tuple:
+    """Orquesta: comprensión -> handler -> (LLM / sugerencias) -> estado."""
+    c = analizar_pregunta(texto, ctx, previo)
+    if ctx.df.empty:
+        return Respuesta("⚠️ No hay datos cargados."), previo
+    if c.intent in HANDLERS:
+        resp = HANDLERS[c.intent](ctx, c)
+    elif c.valores or c.periodos or c.rel or c.ultimos_n:
+        resp = h_perfil(ctx, c) if c.valores else h_resumen(ctx, c)
+    else:
+        llm = consultar_llm(texto, ctx)
+        if llm:
+            resp = Respuesta(llm, pie="Respuesta generada con IA a partir de un resumen "
+                                      "agregado de los datos filtrados.")
+        else:
+            resp = fallback(ctx, c)
+    nuevo = dict(intent=c.intent, dim=c.dim, valores=c.valores, periodos=c.periodos) \
+        if c.intent in HANDLERS else previo
+    return resp, nuevo
+
+
+# =============================================================================
+# 9. PÁGINAS DEL TABLERO
+# =============================================================================
+MODO_INDIVIDUAL = "Individual / Cruzado (interactivo)"
+MODO_CUENTAS = "Comparativa de cuentas"
+MODO_ENTIDADES = "Comparativa de entidades"
+
+
+def leer_seleccion(clave: str) -> tuple:
+    """Lee los puntos seleccionados de un gráfico Plotly (evento nativo)."""
+    estado = st.session_state.get(clave)
+    if not estado:
+        return ()
+    try:
+        puntos = estado.get("selection", {}).get("points", [])
+    except AttributeError:
+        return ()
+    return tuple(dict.fromkeys(p["y"] for p in puntos if "y" in p))
+
+
+def _reset_foco() -> None:
+    st.session_state.ver_grafico += 1
+
+
+def render_foco(f: Filtros, modo: str, interactivo: bool) -> None:
+    izq, der = st.columns([5, 1.3])
+    partes = [f'<span class="chip">Rubro · {esc(x)}</span>' for x in f.focos]
+    partes += [f'<span class="chip">Entidad · {esc(x)}</span>' for x in f.focos_ent]
+    if partes:
+        titulo = "Comparativa activa" if not interactivo else "Filtro cruzado activo"
+        izq.markdown(f'<div class="foco"><b>🎯 {titulo}:</b> {"".join(partes)}</div>',
+                     unsafe_allow_html=True)
+    else:
+        izq.markdown('<div class="foco"><b>🌐 Segmento analizado:</b> Consolidado global '
+                     '— haga clic en una barra para filtrar todo el tablero.</div>',
+                     unsafe_allow_html=True)
+    if interactivo and partes:
+        der.button("✖ Quitar filtro cruzado", key="reset_foco", on_click=_reset_foco,
+                   **_ancho(st.button))
+
+
+def render_kpis(dyn: pd.DataFrame, serie: pd.Series, tend: dict) -> None:
+    total = float(dyn["Importe"].sum())
+    prom = total / len(serie) if len(serie) else 0.0
+    neto = float(dyn["Importe_Neto"].sum())
+    var = variacion_ultimo_mes(serie)
+    sub1 = f"Media mensual: <b>{money_html(prom)}</b>"
+    if var:
+        sub1 += "<br>" + delta_html(var[2], f"{etiqueta_periodo(var[0])} vs. "
+                                            f"{etiqueta_periodo(var[1])}")
+    color_neto = BAJA if neto < 0 else SUBE
+    lectura = "Posición favorable" if neto < 0 else "Gasto neto"
+    cols = st.columns(3)
+    tarjetas = [
+        kpi_card("Importe acumulado", money_html(total), sub1, CORP_BLUE),
+        kpi_card("Neto contable",
+                 f'<span style="color:{color_neto}">{money_html(neto)}</span>',
+                 f"Gasto − menor gasto/ingreso<br><b>{lectura}</b>", color_neto),
+        kpi_card("Vector de tendencia", tend["estado"],
+                 (f"{pct_txt(tend['pct'], True)} por mes · R² {_num(tend['r2'], 2)}<br>"
+                  f"Umbral ±1,5 % del promedio") if len(serie) >= 3 else "Requiere ≥ 3 meses",
+                 tend["color"]),
+    ]
+    for col, html_card in zip(cols, tarjetas):
+        col.markdown(html_card, unsafe_allow_html=True)
+    st.markdown('<div class="nota">ℹ️ Las barras y líneas usan <b>valores absolutos</b> '
+                'para no distorsionar la escala; el <b>Neto contable</b> conserva el signo '
+                'del libro mayor.</div>', unsafe_allow_html=True)
+
+
+def _grafico(fig: go.Figure, clave: str, interactivo: bool = False) -> None:
+    kwargs = dict(key=clave, config=PLOT_CFG, **_ancho(st.plotly_chart))
+    if interactivo:
+        kwargs.update(on_select="rerun", selection_mode="points")
+    st.plotly_chart(fig, **kwargs)
+
+
+def render_panorama(df: pd.DataFrame, f: Filtros, dyn: pd.DataFrame, serie: pd.Series,
+                    tend: dict, modo: str, items: tuple, sel_r: tuple, sel_e: tuple) -> None:
+    interactivo = modo == MODO_INDIVIDUAL
+    ver = st.session_state.ver_grafico
+    with st.container(border=True):
+        panel("Evolución cronológica del importe", "Línea de tendencia lineal punteada")
+        if not interactivo and items:
+            columna = "Rubro" if modo == MODO_CUENTAS else "Entidad"
+            _grafico(fig_evolucion_comparada(dyn, columna), "g_evol_comp")
+        else:
+            _grafico(fig_evolucion(serie, tend), "g_evol")
+
+    izq, der = st.columns(2)
+    data_r = dyn if not interactivo else filtrar(df, f, rubro=False)
+    data_e = dyn if not interactivo else filtrar(df, f, entidad=False)
+    with izq, st.container(border=True):
+        panel("Distribución por rubro contable",
+              "👆 clic para filtrar" if interactivo else "bloqueado en comparativa")
+        _grafico(fig_barras(data_r.groupby("Rubro")["Importe"].sum(), sel_r),
+                 f"g_rubro_{ver}" if interactivo else "g_rubro_fijo", interactivo)
+    with der, st.container(border=True):
+        panel("Concentración por entidad / tercero",
+              "👆 clic para filtrar (top 15)" if interactivo else "top 15")
+        ent = (data_e[data_e["Entidad"] != "Sin entidad"].groupby("Entidad")["Importe"].sum())
+        top = ent.nlargest(15)
+        extra = ent[ent.index.isin(sel_e) & ~ent.index.isin(top.index)]
+        _grafico(fig_barras(pd.concat([top, extra]), sel_e, alto=380),
+                 f"g_ent_{ver}" if interactivo else "g_ent_fijo", interactivo)
+
+
+def _color_var(valor: float) -> str:
+    if pd.isna(valor):
+        return ""
+    if valor > 0:
+        return f"color: {SUBE}; font-weight: 700;"
+    if valor < 0:
+        return f"color: {BAJA}; font-weight: 700;"
+    return ""
+
+
+def render_detalle(dyn: pd.DataFrame) -> None:
+    izq, der = st.columns([1.25, 1])
+    with izq, st.container(border=True):
+        panel("Matriz de variación (MoM / YoY)", "Rojo: el gasto sube · Verde: el gasto baja")
+        matriz = matriz_variacion(dyn)
+        if len(matriz) > 1:
+            estilo = (matriz.style
+                      .format({"Importe": cop, "Δ vs mes anterior": cop,
+                               "Var. MoM %": lambda v: pct_txt(v, True),
+                               "Var. YoY %": lambda v: pct_txt(v, True)}, na_rep="—")
+                      .map(_color_var, subset=["Δ vs mes anterior", "Var. MoM %", "Var. YoY %"]))
+            st.dataframe(estilo, hide_index=True, height=470, **_ancho(st.dataframe))
+            st.download_button("⬇️ Descargar matriz (CSV)",
+                               matriz.to_csv(index=False).encode("utf-8-sig"),
+                               "matriz_variacion.csv", "text/csv", key="dl_matriz",
+                               **_ancho(st.download_button))
+        else:
+            st.info("💡 Se requieren al menos dos periodos para calcular variaciones.")
+    with der:
+        with st.container(border=True):
+            panel("Resumen por rubro")
+            r = resumen_rubros(dyn)
+            st.dataframe(
+                _fmt_tabla(r, dinero=("Importe", "Neto"),
+                           porcentaje=("% del total",)),
+                hide_index=True, **_ancho(st.dataframe))
+        with st.container(border=True):
+            panel("Principales conceptos (descripción contable)")
+            g = (dyn[dyn["Concepto"] != SIN_DESCRIPCION].groupby("Concepto")["Importe"]
+                 .agg(["sum", "count"]).sort_values("sum", ascending=False).head(10))
+            t = pd.DataFrame({"Concepto": g.index, "Importe": g["sum"].to_numpy(),
+                              "Registros": g["count"].to_numpy()})
+            sd = dyn.loc[dyn["Concepto"] == SIN_DESCRIPCION, "Importe"].sum()
+            st.dataframe(_fmt_tabla(t, dinero=("Importe",)), hide_index=True,
+                         **_ancho(st.dataframe))
+            if sd:
+                st.caption(f"Sin descripción: {fmt(sd)} "
+                           f"({pct_txt(sd / dyn['Importe'].sum() * 100)} del importe).")
+
+
+def _encolar(pregunta: str) -> None:
+    st.session_state.pregunta_pendiente = pregunta
+
+
+def _limpiar_chat() -> None:
+    st.session_state.historial = []
+    st.session_state.estado_chat = {}
+
+
+def _palabras(texto: str):
+    for palabra in re.split(r"(\s+)", texto):
+        yield palabra
+        time.sleep(0.008)
+
+
+def _pintar_mensaje(msg: dict, animar: bool = False) -> None:
+    avatar = "🧑‍💼" if msg["rol"] == "user" else "🤖"
+    with st.chat_message(msg["rol"], avatar=avatar):
+        if msg["rol"] == "user":
+            st.markdown(msg["texto"].replace("$", "\\$"))
+            return
+        resp: Respuesta = msg["resp"]
+        if animar:
+            st.write_stream(_palabras(resp.texto))
+        else:
+            st.markdown(resp.texto)
+        if resp.tabla is not None and not resp.tabla.empty:
+            st.dataframe(resp.tabla, hide_index=True, **_ancho(st.dataframe))
+        if resp.figura is not None:
+            st.plotly_chart(resp.figura, key=f"chat_fig_{msg['id']}", config=PLOT_CFG,
+                            **_ancho(st.plotly_chart))
+        if resp.pie:
+            st.caption(resp.pie)
+
+
+def render_asistente(df: pd.DataFrame, f: Filtros) -> None:
+    api_key = obtener_api_key()
+    premium = st.session_state.tipo_usuario == "Premium"
+    with st.container(border=True):
+        panel("Asistente analítico inteligente",
+              "Entiende lenguaje natural · errores de digitación · preguntas encadenadas")
+        c1, c2 = st.columns([3, 2])
+        c1.caption("Responde sobre los filtros activos. Si menciona un mes o año, consulta "
+                   "todo el histórico. Pruebe: *¿y en marzo?* después de una cifra.")
+        usar_llm = False
+        if api_key and premium:
+            usar_llm = c2.toggle("IA generativa para preguntas abiertas", key="usar_llm",
+                                 help="Envía solo un resumen agregado (sin registros ni "
+                                      "terceros) al modelo de lenguaje.")
+        ctx = Ctx(df=df, f=f, api_key=api_key, usar_llm=usar_llm,
+                  historial=[(m["rol"], m["texto"] if m["rol"] == "user" else m["resp"].texto)
+                             for m in st.session_state.historial])
+        chips = sugerencias(ctx)
+        for fila in (chips[:3], chips[3:]):
+            for col, texto in zip(st.columns(3), fila):
+                col.button(texto, key=f"chip_{texto}", on_click=_encolar, args=(texto,),
+                           **_ancho(st.button))
+        if not st.session_state.historial:
+            st.markdown("")
+            st.info("💬 Escriba **ayuda** para ver todo lo que puedo responder, o elija una "
+                    "sugerencia.")
+        for msg in st.session_state.historial:
+            _pintar_mensaje(msg)
+        entrada = st.chat_input("Escriba su consulta analítica…")
+        entrada = entrada or st.session_state.pop("pregunta_pendiente", None)
+        if entrada:
+            st.session_state.contador_chat += 2
+            nuevo_u = dict(rol="user", texto=entrada, id=st.session_state.contador_chat - 1)
+            _pintar_mensaje(nuevo_u)
+            with st.spinner("Analizando datos…"):
+                resp, estado = responder(entrada, ctx, st.session_state.estado_chat)
+            nuevo_a = dict(rol="assistant", resp=resp, id=st.session_state.contador_chat)
+            _pintar_mensaje(nuevo_a, animar=True)
+            st.session_state.estado_chat = estado
+            st.session_state.historial += [nuevo_u, nuevo_a]
+        if st.session_state.historial:
+            st.button("🧹 Nueva conversación", key="limpiar_chat", on_click=_limpiar_chat)
+
+
+# =============================================================================
+# 10. APLICACIÓN
+# =============================================================================
+def main() -> None:
+    st.set_page_config(page_title=APP_TITULO, page_icon="📊", layout="wide",
+                       initial_sidebar_state="expanded")
+    
+    init_estado()
+    if not st.session_state.autenticado:
+        pantalla_login()
+        st.stop()
+    verificar_expiracion()
+    sidebar_sesion()
+
+    panel("Origen de datos", mini=True, destino=st.sidebar)
+    archivo = st.sidebar.file_uploader("Libro contable (Excel)", type=["xlsx", "xls"],
+                                       label_visibility="collapsed")
+    if archivo is None:
+        pantalla_bienvenida()
+        st.stop()
+    contenido = archivo.getvalue()
+    try:
+        with st.spinner("Construyendo modelo de datos…"):
+            df = cargar_datos(hashlib.md5(contenido).hexdigest(), contenido)
+    except Exception as exc:   # noqa: BLE001
+        st.error(f"No fue posible procesar el archivo: {exc}")
+        st.stop()
+    if df.empty:
+        st.warning("El archivo no contiene registros válidos.")
+        st.stop()
+
+    base = sidebar_filtros(df)
+    if not base.meses or not base.tipos:
+        st.warning("Seleccione al menos un mes y un origen de cuenta en el panel lateral.")
+        st.stop()
+    disponible = filtrar(df, base)
+    if disponible.empty:
+        st.warning("No hay registros con los filtros actuales.")
+        st.stop()
+
+    hero(APP_TITULO, f"Gastos financieros · {_rango_texto(disponible)} · "
+                     f"{_num(len(disponible), 0)} registros",
+         [f"Perfil {st.session_state.tipo_usuario}",
+          "Valores absolutos"])
+
+    with st.container(border=True):
+        panel("Modo de análisis", "Individual con filtro cruzado o comparativa de dos elementos")
+        c1, c2 = st.columns([1, 2.4])
+        modo = c1.selectbox("Modo", [MODO_INDIVIDUAL, MODO_CUENTAS, MODO_ENTIDADES],
+                            label_visibility="collapsed")
+        items: tuple = ()
+        if modo == MODO_CUENTAS:
+            items = tuple(c2.multiselect("Cuentas", sorted(disponible["Rubro"].unique()),
+                                         max_selections=2, label_visibility="collapsed",
+                                         placeholder="Seleccione hasta 2 cuentas"))
+        elif modo == MODO_ENTIDADES:
+            items = tuple(c2.multiselect("Entidades", sorted(disponible["Entidad"].unique()),
+                                         max_selections=2, label_visibility="collapsed",
+                                         placeholder="Seleccione hasta 2 entidades"))
+
+    interactivo = modo == MODO_INDIVIDUAL
+    ver = st.session_state.ver_grafico
+    sel_r = sel_e = ()
+    if interactivo:
+        sel_r = tuple(x for x in leer_seleccion(f"g_rubro_{ver}")
+                      if x in set(disponible["Rubro"]))
+        sel_e = tuple(x for x in leer_seleccion(f"g_ent_{ver}")
+                      if x in set(disponible["Entidad"]))
+        f = replace(base, focos=sel_r, focos_ent=sel_e)
+    elif modo == MODO_CUENTAS:
+        f = replace(base, focos=items)
+    else:
+        f = replace(base, focos_ent=items)
+
+    render_foco(f, modo, interactivo)
+    dyn = filtrar(df, f)
+    if dyn.empty:
+        st.warning("La combinación seleccionada no tiene registros.")
+        st.button("Restablecer filtro cruzado", on_click=_reset_foco, key="reset_vacio")
+        st.stop()
+
+    serie = serie_mensual(dyn)
+    tend = analizar_tendencia(serie)
+    render_kpis(dyn, serie, tend)
+
+    t1, t2, t3 = st.tabs(["📊 Panorama", "🧮 Detalle y variación", "🤖 Asistente IA"])
+    with t1:
+        render_panorama(df, f, dyn, serie, tend, modo, items, sel_r, sel_e)
+    with t2:
+        render_detalle(dyn)
+    with t3:
+        render_asistente(df, f)
+
+
+if __name__ == "__main__":
+    main()
