@@ -2011,11 +2011,7 @@ def render_kpis(dyn: pd.DataFrame, serie: pd.Series, tend: dict) -> None:
                  tend["color"]),
     ]
     for col, html_card in zip(cols, tarjetas):
-        col.markdown(html_card, unsafe_allow_html=True)
-    st.markdown('<div class="nota">ℹ️ Las barras y líneas usan <b>valores absolutos</b> '
-                'para no distorsionar la escala; el <b>Neto contable</b> conserva el signo '
-                'del libro mayor.</div>', unsafe_allow_html=True)
-
+        
 
 def _grafico(fig: go.Figure, clave: str, interactivo: bool = False) -> None:
     kwargs = dict(key=clave, config=PLOT_CFG, **_ancho(st.plotly_chart))
